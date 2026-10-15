@@ -1,0 +1,1 @@
+# golang-integration-service-rabbitmq
