@@ -5,8 +5,10 @@ import (
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/storage"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +28,10 @@ type CreateTaskResponse struct {
 
 type GetTaskResponse struct {
 	Status string `json:"status"`
+}
+
+type GetResultResponse struct {
+	Result string `json:"result"`
 }
 
 func NewHandler(s storage.TaskStorage) *Handler {
@@ -64,6 +70,17 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go func() {
+		time.Sleep(3 * time.Second)
+
+		newTask.Status = models.StatusReady
+		newTask.Result = "Mock execution completed"
+
+		if err := h.storage.Save(newTask); err != nil {
+			log.Printf("failed to update task %s: %v", newTask.ID, err)
+		}
+	}()
+
 	response := CreateTaskResponse{
 		TaskID: id,
 	}
@@ -71,7 +88,9 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
 }
 
 func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
@@ -108,5 +127,32 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "This method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
+	id := strings.TrimPrefix(r.URL.Path, "/result/")
+	if id == "" {
+		http.Error(w, "Task ID is required", http.StatusBadRequest)
+		return
+	}
+
+	task, err := h.storage.Get(id)
+
+	if err != nil {
+		http.Error(w, "This task not found", http.StatusNotFound)
+		return
+	}
+
+	response := GetResultResponse{
+		Result: task.Result,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
 }
