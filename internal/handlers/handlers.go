@@ -6,6 +6,7 @@ import (
 	"go-integration-service-rabbitmq/internal/storage"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -21,6 +22,10 @@ type CreateTaskRequest struct {
 
 type CreateTaskResponse struct {
 	TaskID string `json:"task_id"`
+}
+
+type GetTaskResponse struct {
+	Status string `json:"status"`
 }
 
 func NewHandler(s storage.TaskStorage) *Handler {
@@ -67,4 +72,41 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 
 	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "This method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/status/")
+	if id == "" {
+		http.Error(w, "Task ID is required", http.StatusBadRequest)
+		return
+	}
+
+	task, err := h.storage.Get(id)
+
+	if err != nil {
+		http.Error(w, "This task not found", http.StatusNotFound)
+		return
+	}
+
+	response := GetTaskResponse{
+		Status: task.Status,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
+
+}
+
+func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
+
 }
