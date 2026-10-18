@@ -7,13 +7,13 @@ import (
 )
 
 type MemoryStorage struct {
-	tasks map[uint64]models.Task
+	tasks map[string]models.Task
 	mu    sync.RWMutex
 }
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		tasks: make(map[uint64]models.Task),
+		tasks: make(map[string]models.Task),
 	}
 }
 
@@ -25,14 +25,14 @@ func (s *MemoryStorage) Save(task models.Task) error {
 	return nil
 }
 
-func (s *MemoryStorage) Get(id uint64) (models.Task, error) {
+func (s *MemoryStorage) Get(id string) (models.Task, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	task, ok := s.tasks[id]
 
 	if !ok {
-		return models.Task{}, fmt.Errorf("task %d not found", id)
+		return models.Task{}, fmt.Errorf("task %s not found", id)
 	}
 
 	return task, nil
