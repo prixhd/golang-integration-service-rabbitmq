@@ -58,6 +58,31 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		authToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+		if authToken == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if _, err := h.sessions.GetSession(authToken); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 // CreateTask godoc
 // @Summary Create a new task
 // @Description Accepts code for asynchronous processing
@@ -65,6 +90,8 @@ func NewHandler(
 // @Tags tasks
 // @Accept json
 // @Produce json
+// @Security BearerAuth
+// @Failure 401 {string} string "Unauthorized"
 // @Success 201 {object} CreateTaskResponse
 // @Failure 400 {string} string "Invalid JSON"
 // @Failure 405 {string} string "Method not allowed"
@@ -129,6 +156,8 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 // @Tags tasks
 // @Description Returns the current processing status of a task
 // @Param id path string true "Status ID"
+// @Security BearerAuth
+// @Failure 401 {string} string "Unauthorized"
 // @Success 200 {object} GetTaskResponse
 // @Failure 400 {string} string "Task ID is required"
 // @Failure 404 {string} string "This task not found"
@@ -173,6 +202,8 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 // @Tags tasks
 // @Description Returns result of a task
 // @Param id path string true "Result ID"
+// @Security BearerAuth
+// @Failure 401 {string} string "Unauthorized"
 // @Success 200 {object} GetResultResponse
 // @Failure 400 {string} string "Task ID is required"
 // @Failure 404 {string} string "This task not found"
@@ -209,6 +240,18 @@ func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// @Summary Register a new user
+// @Description Creates a new user account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body RegisterRequest true "User credentials"
+// @Success 201 {string} string "Created"
+// @Failure 400 {string} string "Bad Request"
+// @Failure 405 {string} string "Method not allowed"
+// @Failure 409 {string} string "User already exists"
+// @Failure 500 {string} string "Internal Server Error"
+// @Router /register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var reg RegisterRequest
 
@@ -258,6 +301,19 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// Login godoc
+// @Summary Login user
+// @Description Login user to account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body RegisterRequest true "User credentials"
+// @Success 200 {object} LoginResponse
+// @Failure 400 {string} string "Username and password are required"
+// @Failure 401 {string} string "Invalid credentials"
+// @Failure 405 {string} string "Method not allowed"
+// @Failure 500 {string} string "Internal Server Error"
+// @Router /login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var reg RegisterRequest
 

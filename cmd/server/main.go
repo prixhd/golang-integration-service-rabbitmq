@@ -13,6 +13,10 @@ import (
 // @title Golang integration service rabbitmq swagger
 // @version 1.0
 // @description Swagger api for golang service
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter your token as: Bearer <token>
 func main() {
 	store := storage.NewMemoryStorage()
 
@@ -20,9 +24,11 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/task", handler.CreateTask)
-	mux.HandleFunc("/status/", handler.GetStatus)
-	mux.HandleFunc("/result/", handler.GetResult)
+	mux.HandleFunc("/task", handler.AuthMiddleware(handler.CreateTask))
+	mux.HandleFunc("/status/", handler.AuthMiddleware(handler.GetStatus))
+	mux.HandleFunc("/result/", handler.AuthMiddleware(handler.GetResult))
+	mux.HandleFunc("/register", handler.Register)
+	mux.HandleFunc("/login", handler.Login)
 	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
 	log.Fatal(http.ListenAndServe(":8000", mux))
