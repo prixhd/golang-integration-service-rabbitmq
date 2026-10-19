@@ -11,15 +11,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
-	storage storage.TaskStorage
+	tasks    storage.TaskStorage
+	users    storage.UserStorage
+	sessions storage.SessionStorage
 }
 
 type CreateTaskRequest struct {
 	Code     string `json:"code"`
 	Language string `json:"language"`
+}
+
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type CreateTaskResponse struct {
@@ -34,9 +42,15 @@ type GetResultResponse struct {
 	Result string `json:"result"`
 }
 
-func NewHandler(s storage.TaskStorage) *Handler {
+func NewHandler(
+	tasks storage.TaskStorage,
+	users storage.UserStorage,
+	sessions storage.SessionStorage,
+) *Handler {
 	return &Handler{
-		storage: s,
+		tasks:    tasks,
+		users:    users,
+		sessions: sessions,
 	}
 }
 
@@ -77,7 +91,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Result:   "",
 	}
 
-	if err := h.storage.Save(newTask); err != nil {
+	if err := h.tasks.Save(newTask); err != nil {
 		http.Error(w, "Failed to save task", http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +102,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		newTask.Status = models.StatusReady
 		newTask.Result = "Mock execution completed"
 
-		if err := h.storage.Save(newTask); err != nil {
+		if err := h.tasks.Save(newTask); err != nil {
 			log.Printf("failed to update task %s: %v", newTask.ID, err)
 		}
 	}()
@@ -129,7 +143,7 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.storage.Get(id)
+	task, err := h.tasks.Get(id)
 
 	if err != nil {
 		http.Error(w, "This task not found", http.StatusNotFound)
@@ -172,7 +186,7 @@ func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.storage.Get(id)
+	task, err := h.tasks.Get(id)
 
 	if err != nil {
 		http.Error(w, "This task not found", http.StatusNotFound)
@@ -189,4 +203,53 @@ func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		return
 	}
+}
+
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	var reg RegisterRequest
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&reg)
+
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if reg.Username == "" || reg.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword(
+		[]byte(reg.Password),
+		bcrypt.DefaultCost,
+	)
+
+	if err != nil {
+		http.Error(w, "Error with generate hash from password", http.StatusInternalServerError)
+		return
+	}
+
+	passwordHash := string(hash)
+	id := uuid.NewString()
+
+	user := models.User{
+		ID:           id,
+		Login:        reg.Username,
+		PasswordHash: passwordHash,
+	}
+
+	if err := h.users.SaveUser(user); err != nil {
+		http.Error(w, "User already exists", http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+
 }
