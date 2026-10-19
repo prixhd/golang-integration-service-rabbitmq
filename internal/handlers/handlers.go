@@ -42,6 +42,10 @@ type GetResultResponse struct {
 	Result string `json:"result"`
 }
 
+type LoginResponse struct {
+	Token string `json:"token"`
+}
+
 func NewHandler(
 	tasks storage.TaskStorage,
 	users storage.UserStorage,
@@ -252,4 +256,65 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	var reg RegisterRequest
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&reg)
+
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if reg.Username == "" || reg.Password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.users.GetUserByLogin(reg.Username)
+
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword(
+		[]byte(user.PasswordHash),
+		[]byte(reg.Password),
+	)
+
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	token := uuid.NewString()
+
+	session := models.Session{
+		UserID:    user.ID,
+		SessionID: token,
+	}
+
+	if err := h.sessions.SaveSession(session); err != nil {
+		http.Error(w, "Session already exists", http.StatusInternalServerError)
+		return
+	}
+
+	response := LoginResponse{
+		Token: token,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
 }
