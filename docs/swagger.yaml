@@ -1,0 +1,125 @@
+definitions:
+  internal_handlers.CreateTaskRequest:
+    properties:
+      code:
+        type: string
+      language:
+        type: string
+    type: object
+  internal_handlers.CreateTaskResponse:
+    properties:
+      task_id:
+        type: string
+    type: object
+  internal_handlers.GetResultResponse:
+    properties:
+      result:
+        type: string
+    type: object
+  internal_handlers.GetTaskResponse:
+    properties:
+      status:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Swagger api for golang service
+  title: Golang integration service rabbitmq swagger
+  version: "1.0"
+paths:
+  /result/{id}:
+    get:
+      description: Returns result of a task
+      parameters:
+      - description: Result ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.GetResultResponse'
+        "400":
+          description: Task ID is required
+          schema:
+            type: string
+        "404":
+          description: This task not found
+          schema:
+            type: string
+        "405":
+          description: This method not allowed
+          schema:
+            type: string
+      summary: Retrieves result based on given ID
+      tags:
+      - tasks
+  /status/{id}:
+    get:
+      description: Returns the current processing status of a task
+      parameters:
+      - description: Status ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.GetTaskResponse'
+        "400":
+          description: Task ID is required
+          schema:
+            type: string
+        "404":
+          description: This task not found
+          schema:
+            type: string
+        "405":
+          description: This method not allowed
+          schema:
+            type: string
+      summary: Retrieves status based on given ID
+      tags:
+      - tasks
+  /task:
+    post:
+      consumes:
+      - application/json
+      description: Accepts code for asynchronous processing
+      parameters:
+      - description: Task data
+        in: body
+        name: task
+        schema:
+          $ref: '#/definitions/internal_handlers.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.CreateTaskResponse'
+        "400":
+          description: Invalid JSON
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Create a new task
+      tags:
+      - tasks
+swagger: "2.0"

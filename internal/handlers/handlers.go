@@ -40,6 +40,18 @@ func NewHandler(s storage.TaskStorage) *Handler {
 	}
 }
 
+// CreateTask godoc
+// @Summary Create a new task
+// @Description Accepts code for asynchronous processing
+// @Param task body CreateTaskRequest false "Task data"
+// @Tags tasks
+// @Accept json
+// @Produce json
+// @Success 201 {object} CreateTaskResponse
+// @Failure 400 {string} string "Invalid JSON"
+// @Failure 405 {string} string "Method not allowed"
+// @Failure 500 {string} string "Internal server error"
+// @Router /task [post]
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var task CreateTaskRequest
 
@@ -93,6 +105,17 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetStatus godoc
+// @Summary Retrieves status based on given ID
+// @Produce json
+// @Tags tasks
+// @Description Returns the current processing status of a task
+// @Param id path string true "Status ID"
+// @Success 200 {object} GetTaskResponse
+// @Failure 400 {string} string "Task ID is required"
+// @Failure 404 {string} string "This task not found"
+// @Failure 405 {string} string "This method not allowed"
+// @Router /status/{id} [get]
 func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet {
@@ -126,6 +149,17 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// GetResult godoc
+// @Summary Retrieves result based on given ID
+// @Produce json
+// @Tags tasks
+// @Description Returns result of a task
+// @Param id path string true "Result ID"
+// @Success 200 {object} GetResultResponse
+// @Failure 400 {string} string "Task ID is required"
+// @Failure 404 {string} string "This task not found"
+// @Failure 405 {string} string "This method not allowed"
+// @Router /result/{id} [get]
 func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "This method not allowed", http.StatusMethodNotAllowed)
