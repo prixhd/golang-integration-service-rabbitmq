@@ -6,9 +6,9 @@ const (
 )
 
 type Task struct {
-	ID       string `json:"id"`
-	Code     string `json:"code"`
-	Language string `json:"language"`
-	Status   string `json:"status"`
-	Result   string `json:"result"`
+	ID         string `json:"id"`
+	Code       string `json:"code"`
+	Translator string `json:"translator"`
+	Status     string `json:"status"`
+	Result     string `json:"result"`
 }

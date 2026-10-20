@@ -3,26 +3,25 @@ package handlers
 import (
 	"encoding/json"
 	"go-integration-service-rabbitmq/internal/models"
+	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
-	"io"
-	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
-	tasks    storage.TaskStorage
-	users    storage.UserStorage
-	sessions storage.SessionStorage
+	tasks     storage.TaskStorage
+	users     storage.UserStorage
+	sessions  storage.SessionStorage
+	publisher rabbitmq.Publisher
 }
 
 type CreateTaskRequest struct {
-	Code     string `json:"code"`
-	Language string `json:"language"`
+	Code       string `json:"code"`
+	Translator string `json:"translator"`
 }
 
 type RegisterRequest struct {
@@ -50,11 +49,13 @@ func NewHandler(
 	tasks storage.TaskStorage,
 	users storage.UserStorage,
 	sessions storage.SessionStorage,
+	publisher rabbitmq.Publisher,
 ) *Handler {
 	return &Handler{
-		tasks:    tasks,
-		users:    users,
-		sessions: sessions,
+		tasks:     tasks,
+		users:     users,
+		sessions:  sessions,
+		publisher: publisher,
 	}
 }
 
@@ -86,7 +87,7 @@ func (h *Handler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // CreateTask godoc
 // @Summary Create a new task
 // @Description Accepts code for asynchronous processing
-// @Param task body CreateTaskRequest false "Task data"
+// @Param task body CreateTaskRequest true "Task data"
 // @Tags tasks
 // @Accept json
 // @Produce json
@@ -107,19 +108,24 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	err := json.NewDecoder(r.Body).Decode(&task)
 
-	if err != nil && err != io.EOF {
+	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if task.Code == "" || task.Translator == "" {
+		http.Error(w, "code and translator are required", http.StatusBadRequest)
 		return
 	}
 
 	id := uuid.NewString()
 
 	newTask := models.Task{
-		ID:       id,
-		Code:     task.Code,
-		Language: task.Language,
-		Status:   models.StatusInProgress,
-		Result:   "",
+		ID:         id,
+		Code:       task.Code,
+		Translator: task.Translator,
+		Status:     models.StatusInProgress,
+		Result:     "",
 	}
 
 	if err := h.tasks.Save(newTask); err != nil {
@@ -127,16 +133,22 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
-		time.Sleep(3 * time.Second)
+	message := models.TaskMessage{
+		TaskID:     id,
+		Translator: task.Translator,
+		Code:       task.Code,
+	}
 
-		newTask.Status = models.StatusReady
-		newTask.Result = "Mock execution completed"
+	messageData, err := json.Marshal(message)
+	if err != nil {
+		http.Error(w, "failed to convert json to []byte", http.StatusInternalServerError)
+		return
+	}
 
-		if err := h.tasks.Save(newTask); err != nil {
-			log.Printf("failed to update task %s: %v", newTask.ID, err)
-		}
-	}()
+	if err := h.publisher.PublishTask(messageData); err != nil {
+		http.Error(w, "failed public task to rabbitmq", http.StatusInternalServerError)
+		return
+	}
 
 	response := CreateTaskResponse{
 		TaskID: id,

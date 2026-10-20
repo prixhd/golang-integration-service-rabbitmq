@@ -7,21 +7,25 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func NewConnection(url string) (*amqp.Connection, error) {
-	conn, err := amqp.Dial(url)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
+type Publisher interface {
+	PublishTask(body []byte) error
 }
 
-func PublishTask(ch *amqp.Channel, body []byte) error {
+type AMQPPublisher struct {
+	ch *amqp.Channel
+}
+
+func NewPublisher(ch *amqp.Channel) *AMQPPublisher {
+	return &AMQPPublisher{
+		ch: ch,
+	}
+}
+
+func (p *AMQPPublisher) PublishTask(body []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := ch.PublishWithContext(
+	err := p.ch.PublishWithContext(
 		ctx,
 		"",
 		"tasks",
@@ -33,11 +37,17 @@ func PublishTask(ch *amqp.Channel, body []byte) error {
 			DeliveryMode: amqp.Persistent,
 		})
 
+	return err
+}
+
+func NewConnection(url string) (*amqp.Connection, error) {
+	conn, err := amqp.Dial(url)
+
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return conn, nil
 }
 
 func DeclareQueue(ch *amqp.Channel) (amqp.Queue, error) {

@@ -27,18 +27,20 @@ func run() error {
 
 	ch, err := conn.Channel()
 	if err != nil {
-		return fmt.Errorf("Error with create rabbitmq channel: %w", err)
+		return fmt.Errorf("failed to create rabbitmq channel: %w", err)
 	}
 	defer ch.Close()
 
 	_, err = rabbitmq.DeclareQueue(ch)
 	if err != nil {
-		return fmt.Errorf("Error with declare queue rabbitmq: %w", err)
+		return fmt.Errorf("failed to declare queue rabbitmq: %w", err)
 	}
+
+	publisher := rabbitmq.NewPublisher(ch)
 
 	store := storage.NewMemoryStorage()
 
-	handler := handlers.NewHandler(store, store, store)
+	handler := handlers.NewHandler(store, store, store, publisher)
 
 	mux := http.NewServeMux()
 
