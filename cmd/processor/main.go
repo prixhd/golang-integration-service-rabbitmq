@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
+	"go-integration-service-rabbitmq/internal/runner"
 	"log"
 	"os"
 )
@@ -27,6 +28,24 @@ func run() error {
 	}
 	defer ch.Close()
 
+	_, err = rabbitmq.DeclareQueue(ch)
+	if err != nil {
+		return fmt.Errorf("failed to declare queue: %w", err)
+	}
+
+	cli, err := runner.NewDockerClient()
+
+	if err != nil {
+		return fmt.Errorf("failed to create new docker client: %w", err)
+	}
+	defer cli.Close()
+
+	if err := runner.CheckDocker(cli); err != nil {
+		return fmt.Errorf("failed to check docker client: %w", err)
+	}
+
+	log.Println("Docker Engine connected successfully")
+
 	msgs, err := ch.Consume(
 		"tasks",
 		"",
@@ -40,6 +59,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to consume messages: %w", err)
 	}
+
+	log.Println("CodeProcessor connected to RabbitMQ")
 
 	for msg := range msgs {
 		var taskMessage models.TaskMessage
@@ -56,7 +77,6 @@ func run() error {
 
 	}
 
-	log.Println("CodeProcessor connected to RabbitMQ")
 	return nil
 }
 
