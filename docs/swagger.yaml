@@ -1,9 +1,16 @@
 definitions:
+  internal_handlers.CommitRequest:
+    properties:
+      result:
+        type: string
+      task_id:
+        type: string
+    type: object
   internal_handlers.CreateTaskRequest:
     properties:
       code:
         type: string
-      language:
+      translator:
         type: string
     type: object
   internal_handlers.CreateTaskResponse:
@@ -39,6 +46,50 @@ info:
   title: Golang integration service rabbitmq swagger
   version: "1.0"
 paths:
+  /commit:
+    post:
+      consumes:
+      - application/json
+      description: Internal endpoint used by CodeProcessor to save task results
+      parameters:
+      - description: Task execution result
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.CommitRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "400":
+          description: Invalid request
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "404":
+          description: Task not found
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Save task execution result
+      tags:
+      - internal
   /login:
     post:
       consumes:
@@ -198,6 +249,7 @@ paths:
       - description: Task data
         in: body
         name: task
+        required: true
         schema:
           $ref: '#/definitions/internal_handlers.CreateTaskRequest'
       produces:

@@ -1,0 +1,46 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      COMMIT_SECRET: local-dev-secret
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.processor
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      COMMIT_URL: http://server:8000/commit
+      COMMIT_SECRET: local-dev-secret
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    restart: on-failure
+  code-runner-image:
+    build:
+      context: ./processor
+      dockerfile: Dockerfile
+    image: code-runner:latest
+    profiles:
+      - build

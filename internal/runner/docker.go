@@ -38,26 +38,117 @@ func CheckDocker(cli *client.Client) error {
 	return nil
 }
 
+func runExec(
+	ctx context.Context,
+	cli *client.Client,
+	containerID string,
+	command []string,
+) (string, int, error) {
+	execResponse, err := cli.ContainerExecCreate(
+		ctx,
+		containerID,
+		container.ExecOptions{
+			Cmd:          command,
+			AttachStdout: true,
+			AttachStderr: true,
+		},
+	)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	execAttach, err := cli.ContainerExecAttach(
+		ctx,
+		execResponse.ID,
+		container.ExecAttachOptions{},
+	)
+
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to attach exec: %w", err)
+	}
+
+	defer execAttach.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	_, err = stdcopy.StdCopy(&stdout, &stderr, execAttach.Reader)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read exec output: %w", err)
+	}
+
+	inspect, err := cli.ContainerExecInspect(ctx, execResponse.ID)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to inspect exec: %w", err)
+	}
+
+	return stdout.String() + stderr.String(), inspect.ExitCode, nil
+}
+
 func RunCode(
 	ctx context.Context,
 	cli *client.Client,
 	code string,
 	translator string,
 ) (string, error) {
-	if translator != "python3" {
+	var filename string
+	var command []string
+	var compileCommand []string
+
+	switch translator {
+	case "python3":
+		filename = "main.py"
+		command = []string{"python3", "/workspace/main.py"}
+	case "gcc":
+		filename = "main.c"
+		compileCommand = []string{
+			"gcc",
+			"/workspace/main.c",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "clang":
+		filename = "main.c"
+		compileCommand = []string{
+			"clang",
+			"/workspace/main.c",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "g++":
+		filename = "main.cpp"
+		compileCommand = []string{
+			"g++",
+			"/workspace/main.cpp",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "clang++":
+		filename = "main.cpp"
+		compileCommand = []string{
+			"clang++",
+			"/workspace/main.cpp",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	default:
 		return "", fmt.Errorf("unsupported translator: %s", translator)
 	}
 
 	config := &container.Config{
 		Image: "code-runner:latest",
-		Cmd:   []string{"python3", "-c", code},
+		Cmd:   []string{"sleep", "infinity"},
 		User:  "65534:65534",
 	}
 	pidsLimit := int64(32)
 
 	hostConfig := &container.HostConfig{
 		NetworkMode:    "none",
-		ReadonlyRootfs: true,
+		ReadonlyRootfs: false,
 		CapDrop:        []string{"ALL"},
 		SecurityOpt:    []string{"no-new-privileges"},
 		Resources: container.Resources{
@@ -66,7 +157,8 @@ func RunCode(
 			PidsLimit: &pidsLimit,
 		},
 		Tmpfs: map[string]string{
-			"/tmp": "rw,noexec,nosuid,nodev,size=16m",
+			"/tmp":   "rw,noexec,nosuid,nodev,size=16m",
+			"/build": "rw,exec,nosuid,nodev,size=32m,mode=1777",
 		},
 	}
 
@@ -101,48 +193,44 @@ func RunCode(
 		return "", fmt.Errorf("failed to start container : %w", err)
 	}
 
-	statusCh, errCh := cli.ContainerWait(
+	archive, err := createCodeArchive(filename, code)
+	if err != nil {
+		return "", fmt.Errorf("failed to create code archive: %w", err)
+	}
+
+	err = cli.CopyToContainer(
 		ctx,
 		response.ID,
-		container.WaitConditionNotRunning,
+		"/workspace",
+		archive,
+		container.CopyToContainerOptions{},
 	)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy code into container: %w", err)
+	}
 
-	select {
-	case status := <-statusCh:
-		log.Printf("Container exited with code: %d", status.StatusCode)
+	if compileCommand != nil {
+		compileResult, exitCode, err := runExec(ctx, cli, response.ID, compileCommand)
 
-	case err := <-errCh:
 		if err != nil {
-			return "", fmt.Errorf("failed to wait for container: %w", err)
+			return "", fmt.Errorf("failed to run compiler: %w", err)
 		}
 
-	case <-ctx.Done():
-		return "", fmt.Errorf("container execution timeout: %w", ctx.Err())
+		if exitCode != 0 {
+			return compileResult, nil
+		}
+
+		log.Printf("Compilation result: %s", compileResult)
 	}
 
-	logs, err := cli.ContainerLogs(
-		ctx,
-		response.ID,
-		container.LogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-		},
-	)
-
+	result, _, err := runExec(ctx, cli, response.ID, command)
 	if err != nil {
-		return "", fmt.Errorf("failed to take logs from docker container: %w", err)
+		return "", fmt.Errorf(
+			"failed to execute code: %w; program output: %s",
+			err,
+			result,
+		)
 	}
 
-	defer logs.Close()
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	_, err = stdcopy.StdCopy(&stdout, &stderr, logs)
-
-	if err != nil {
-		return "", fmt.Errorf("failed to take logs and logs error: %w", err)
-	}
-
-	return stdout.String() + stderr.String(), nil
+	return result, nil
 }

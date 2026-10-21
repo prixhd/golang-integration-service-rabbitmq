@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go-integration-service-rabbitmq/internal/commit"
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/runner"
@@ -16,6 +17,16 @@ func run() error {
 	url := os.Getenv("RABBITMQ_URL")
 	if url == "" {
 		url = "amqp://guest:guest@localhost:5672/"
+	}
+
+	commitURL := os.Getenv("COMMIT_URL")
+	if commitURL == "" {
+		commitURL = "http://localhost:8000/commit"
+	}
+
+	commitSecret := os.Getenv("COMMIT_SECRET")
+	if commitSecret == "" {
+		return fmt.Errorf("COMMIT_SECRET is required")
 	}
 
 	conn, err := rabbitmq.NewConnection(url)
@@ -48,6 +59,10 @@ func run() error {
 
 	log.Println("Docker Engine connected successfully")
 
+	if err := ch.Qos(1, 0, false); err != nil {
+		return fmt.Errorf("failed to configure RabbitMQ QoS: %w", err)
+	}
+
 	msgs, err := ch.Consume(
 		"tasks",
 		"",
@@ -70,6 +85,9 @@ func run() error {
 		err := json.Unmarshal(msg.Body, &taskMessage)
 		if err != nil {
 			log.Printf("failed to decode task message: %v", err)
+			if nackErr := msg.Nack(false, false); nackErr != nil {
+				return fmt.Errorf("failed to nack invalid message: %w", nackErr)
+			}
 			continue
 		}
 
@@ -85,11 +103,40 @@ func run() error {
 		cancel()
 
 		if err != nil {
-			log.Printf("failed to run code: %v", err)
-			continue
+			return fmt.Errorf(
+				"failed to run task %s: %w",
+				taskMessage.TaskID,
+				err,
+			)
 		}
 
 		log.Printf("Task %s result: %s", taskMessage.TaskID, result)
+
+		commitCtx, commitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		err = commit.SendResult(
+			commitCtx,
+			commitURL,
+			commitSecret,
+			taskMessage.TaskID,
+			result,
+		)
+
+		commitCancel()
+
+		if err != nil {
+			return fmt.Errorf(
+				"failed to commit task %s: %w",
+				taskMessage.TaskID,
+				err,
+			)
+		}
+
+		err = msg.Ack(false)
+
+		if err != nil {
+			return fmt.Errorf("failed to ack task %s: %w", taskMessage.TaskID, err)
+		}
 
 	}
 

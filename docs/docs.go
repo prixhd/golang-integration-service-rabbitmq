@@ -15,6 +15,75 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/commit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Internal endpoint used by CodeProcessor to save task results",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "internal"
+                ],
+                "summary": "Save task execution result",
+                "parameters": [
+                    {
+                        "description": "Task execution result",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.CommitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Task not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "405": {
+                        "description": "Method not allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Login user to account",
@@ -270,6 +339,7 @@ const docTemplate = `{
                         "description": "Task data",
                         "name": "task",
                         "in": "body",
+                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/internal_handlers.CreateTaskRequest"
                         }
@@ -311,13 +381,24 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "internal_handlers.CommitRequest": {
+            "type": "object",
+            "properties": {
+                "result": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handlers.CreateTaskRequest": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string"
                 },
-                "language": {
+                "translator": {
                     "type": "string"
                 }
             }

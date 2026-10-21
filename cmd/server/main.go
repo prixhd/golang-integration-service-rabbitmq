@@ -15,8 +15,14 @@ import (
 
 func run() error {
 	url := os.Getenv("RABBITMQ_URL")
+	commitSecret := os.Getenv("COMMIT_SECRET")
+
 	if url == "" {
 		url = "amqp://guest:guest@localhost:5672/"
+	}
+
+	if commitSecret == "" {
+		return fmt.Errorf("COMMIT_SECRET is required")
 	}
 
 	conn, err := rabbitmq.NewConnection(url)
@@ -49,6 +55,7 @@ func run() error {
 	mux.HandleFunc("/result/", handler.AuthMiddleware(handler.GetResult))
 	mux.HandleFunc("/register", handler.Register)
 	mux.HandleFunc("/login", handler.Login)
+	mux.HandleFunc("/commit", handler.CommitMiddleware(handler.Commit, commitSecret))
 	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
 	return http.ListenAndServe(":8000", mux)

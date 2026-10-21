@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
@@ -22,6 +23,11 @@ type Handler struct {
 type CreateTaskRequest struct {
 	Code       string `json:"code"`
 	Translator string `json:"translator"`
+}
+
+type CommitRequest struct {
+	TaskID string `json:"task_id"`
+	Result string `json:"result"`
 }
 
 type RegisterRequest struct {
@@ -76,6 +82,20 @@ func (h *Handler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if _, err := h.sessions.GetSession(authToken); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func (h *Handler) CommitMiddleware(next http.HandlerFunc, secret string) http.HandlerFunc {
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		commitHeader := r.Header.Get("Authorization")
+
+		if subtle.ConstantTimeCompare([]byte(commitHeader), []byte("Bearer "+secret)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -385,4 +405,59 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		return
 	}
+}
+
+// Commit godoc
+// @Summary Save task execution result
+// @Description Internal endpoint used by CodeProcessor to save task results
+// @Tags internal
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body CommitRequest true "Task execution result"
+// @Success 200 {string} string "OK"
+// @Failure 400 {string} string "Invalid request"
+// @Failure 401 {string} string "Unauthorized"
+// @Failure 404 {string} string "Task not found"
+// @Failure 405 {string} string "Method not allowed"
+// @Failure 500 {string} string "Internal server error"
+// @Router /commit [post]
+func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
+	var commit CommitRequest
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&commit)
+
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if commit.TaskID == "" {
+		http.Error(w, "task_id is required", http.StatusBadRequest)
+		return
+	}
+
+	task, err := h.tasks.Get(commit.TaskID)
+
+	if err != nil {
+		http.Error(w, "task_id not found", http.StatusNotFound)
+		return
+	}
+
+	task.Status = models.StatusReady
+	task.Result = commit.Result
+
+	err = h.tasks.Save(task)
+
+	if err != nil {
+		http.Error(w, "failed to save task", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
