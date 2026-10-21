@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"go-integration-service-rabbitmq/internal/models"
@@ -8,6 +9,7 @@ import (
 	"go-integration-service-rabbitmq/internal/runner"
 	"log"
 	"os"
+	"time"
 )
 
 func run() error {
@@ -71,9 +73,23 @@ func run() error {
 			continue
 		}
 
-		log.Printf("Task id: %s", taskMessage.TaskID)
-		log.Printf("Translator: %s", taskMessage.Translator)
-		log.Printf("Code: %s", taskMessage.Code)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		result, err := runner.RunCode(
+			ctx,
+			cli,
+			taskMessage.Code,
+			taskMessage.Translator,
+		)
+
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to run code: %v", err)
+			continue
+		}
+
+		log.Printf("Task %s result: %s", taskMessage.TaskID, result)
 
 	}
 

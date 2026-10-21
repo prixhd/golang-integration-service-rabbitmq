@@ -10,15 +10,15 @@ import (
 func TestRunCodePython(t *testing.T) {
 	cli, err := NewDockerClient()
 
-	if err := CheckDocker(cli); err != nil {
-		t.Skipf("Docker Engine is unavailable: %v", err)
-	}
-
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
 
 	defer cli.Close()
+
+	if err := CheckDocker(cli); err != nil {
+		t.Skipf("Docker Engine is unavailable: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
