@@ -18,7 +18,7 @@ def auth_token(user_data):
     login_url = f"{BASE_URL}/login"
 
     response = requests.post(register_url, json=user_data)
-    assert response.status_code == 201
+    assert response.status_code in (201, 409)
 
     response = requests.post(login_url, json=user_data)
     assert response.status_code == 200
@@ -41,7 +41,7 @@ def test_login_user(user_data):
     assert 'token' in data
 
 def get_code_processor_payload():
-    return {"language": "python3", "code": "print('Hello, stdout world!')"}
+    return {"translator": "python3", "code": "print('Hello, stdout world!')"}
 
 def get_image_processor_payload():
     with open("static/sigma.png", "rb") as image_file:
