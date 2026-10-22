@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "go-integration-service-rabbitmq/docs"
 	"go-integration-service-rabbitmq/internal/handlers"
+	"go-integration-service-rabbitmq/internal/metrics"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
 	"log"
@@ -14,11 +15,14 @@ import (
 
 	"go-integration-service-rabbitmq/internal/database"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 func run() error {
+	metrics.RegisterHTTPMetrics()
+
 	url := os.Getenv("RABBITMQ_URL")
 	commitSecret := os.Getenv("COMMIT_SECRET")
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -87,12 +91,43 @@ func run() error {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/task", handler.AuthMiddleware(handler.CreateTask))
-	mux.HandleFunc("/status/", handler.AuthMiddleware(handler.GetStatus))
-	mux.HandleFunc("/result/", handler.AuthMiddleware(handler.GetResult))
-	mux.HandleFunc("/register", handler.Register)
-	mux.HandleFunc("/login", handler.Login)
-	mux.HandleFunc("/commit", handler.CommitMiddleware(handler.Commit, commitSecret))
+	mux.Handle("/task",
+		metrics.HTTPMiddleware("/task",
+			handler.AuthMiddleware(handler.CreateTask),
+		),
+	)
+
+	mux.Handle("/status/",
+		metrics.HTTPMiddleware("/status/{id}",
+			handler.AuthMiddleware(handler.GetStatus),
+		),
+	)
+
+	mux.Handle("/result/",
+		metrics.HTTPMiddleware("/result/{id}",
+			handler.AuthMiddleware(handler.GetResult),
+		),
+	)
+
+	mux.Handle("/register",
+		metrics.HTTPMiddleware("/register",
+			http.HandlerFunc(handler.Register),
+		),
+	)
+
+	mux.Handle("/login",
+		metrics.HTTPMiddleware("/login",
+			http.HandlerFunc(handler.Login),
+		),
+	)
+
+	mux.Handle("/commit",
+		metrics.HTTPMiddleware("/commit",
+			handler.CommitMiddleware(handler.Commit, commitSecret),
+		),
+	)
+
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
 
 	return http.ListenAndServe(":8000", mux)

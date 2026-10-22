@@ -5,15 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"go-integration-service-rabbitmq/internal/commit"
+	"go-integration-service-rabbitmq/internal/metrics"
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/runner"
 	"log"
+	"net/http"
 	"os"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func run() error {
+	// prometeus registr metrics
+	metrics.RegisterProcessorMetrics()
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	go func() {
+		if err := http.ListenAndServe(":9091", metricsMux); err != nil {
+			log.Printf("metrics server error: %v", err)
+		}
+	}()
+
 	url := os.Getenv("RABBITMQ_URL")
 	if url == "" {
 		url = "amqp://guest:guest@localhost:5672/"
@@ -93,12 +108,17 @@ func run() error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
+		start := time.Now()
 		result, err := runner.RunCode(
 			ctx,
 			cli,
 			taskMessage.Code,
 			taskMessage.Translator,
 		)
+
+		// prometeus CodeProcessor histogram
+		duration := time.Since(start).Seconds()
+		metrics.TaskDuration.WithLabelValues(taskMessage.Translator).Observe(duration)
 
 		cancel()
 
@@ -137,6 +157,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("failed to ack task %s: %w", taskMessage.TaskID, err)
 		}
+
+		// prometeus CodeProcessor counter
+		metrics.TasksTotal.
+			WithLabelValues(taskMessage.Translator).
+			Inc()
 
 	}
 

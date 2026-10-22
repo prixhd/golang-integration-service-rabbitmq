@@ -35,6 +35,8 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       COMMIT_URL: http://server:8000/commit
       COMMIT_SECRET: local-dev-secret
+    ports:
+      - "9091:9091"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -77,6 +79,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+  grafana:
+    image: grafana/grafana:12.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

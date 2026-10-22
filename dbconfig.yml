@@ -3,4 +3,8 @@ development:
   datasource: host=localhost port=5432 dbname=app_db user=app password=app_password sslmode=disable
   dir: migrations
   table: migrations
-  
+docker:
+  dialect: postgres
+  datasource: host=postgres port=5432 dbname=app_db user=app password=app_password sslmode=disable
+  dir: migrations
+  table: migrations
