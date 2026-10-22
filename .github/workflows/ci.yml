@@ -3,7 +3,7 @@ name: Go CI
 on:
   push:
     branches:
-      - feature/part3
+      - "feature/part*"
   pull_request:
 
 jobs:
