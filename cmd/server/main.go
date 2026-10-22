@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	_ "go-integration-service-rabbitmq/docs"
 	"go-integration-service-rabbitmq/internal/handlers"
@@ -9,6 +10,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
+
+	"go-integration-service-rabbitmq/internal/database"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 )
@@ -16,6 +20,11 @@ import (
 func run() error {
 	url := os.Getenv("RABBITMQ_URL")
 	commitSecret := os.Getenv("COMMIT_SECRET")
+	databaseURL := os.Getenv("DATABASE_URL")
+
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
 
 	if url == "" {
 		url = "amqp://guest:guest@localhost:5672/"
@@ -42,11 +51,21 @@ func run() error {
 		return fmt.Errorf("failed to declare queue rabbitmq: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	db, err := database.NewPostgres(ctx, databaseURL)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("failed to connect to postgres: %w", err)
+	}
+	defer db.Close()
+
+	postgresStore := storage.NewPostgresStorage(db)
+	sessionStore := storage.NewMemoryStorage()
+
 	publisher := rabbitmq.NewPublisher(ch)
 
-	store := storage.NewMemoryStorage()
-
-	handler := handlers.NewHandler(store, store, store, publisher)
+	handler := handlers.NewHandler(postgresStore, postgresStore, sessionStore, publisher)
 
 	mux := http.NewServeMux()
 

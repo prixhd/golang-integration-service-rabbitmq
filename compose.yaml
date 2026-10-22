@@ -18,11 +18,14 @@ services:
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       COMMIT_SECRET: local-dev-secret
+      REDIS_ADDR: redis:6379
       DATABASE_URL: postgres://app:app_password@postgres:5432/app_db?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
   processor:
     build:
@@ -62,5 +65,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 volumes:
   postgres_data:
+  redis_data:
