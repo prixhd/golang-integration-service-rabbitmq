@@ -49,7 +49,7 @@ func (s *MemoryStorage) SaveUser(user models.User) error {
 	_, exists := s.users[user.Login]
 
 	if exists {
-		return fmt.Errorf("user %s already exists", user.Login)
+		return fmt.Errorf("user %s: %w", user.Login, ErrUserExists)
 	}
 
 	s.users[user.Login] = user

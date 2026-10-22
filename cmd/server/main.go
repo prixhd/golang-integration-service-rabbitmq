@@ -14,6 +14,7 @@ import (
 
 	"go-integration-service-rabbitmq/internal/database"
 
+	"github.com/redis/go-redis/v9"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
@@ -21,6 +22,11 @@ func run() error {
 	url := os.Getenv("RABBITMQ_URL")
 	commitSecret := os.Getenv("COMMIT_SECRET")
 	databaseURL := os.Getenv("DATABASE_URL")
+	redisAddr := os.Getenv("REDIS_ADDR")
+
+	if redisAddr == "" {
+		return fmt.Errorf("REDIS_ADDR is required")
+	}
 
 	if databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
@@ -50,19 +56,31 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to declare queue rabbitmq: %w", err)
 	}
-
+	// подключение PostgreSql
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
 	db, err := database.NewPostgres(ctx, databaseURL)
 	cancel()
 	if err != nil {
-		return fmt.Errorf("failed to connect to postgres: %w", err)
+		return fmt.Errorf("failed connect to postgres: %w", err)
 	}
 	defer db.Close()
 
-	postgresStore := storage.NewPostgresStorage(db)
-	sessionStore := storage.NewMemoryStorage()
+	// подключение Redis
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	defer redisClient.Close()
 
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	err = redisClient.Ping(ctx).Err()
+	cancel()
+
+	if err != nil {
+		return fmt.Errorf("failed connect to redis: %w", err)
+	}
+
+	postgresStore := storage.NewPostgresStorage(db)
+	sessionStore := storage.NewRedisStorage(redisClient)
 	publisher := rabbitmq.NewPublisher(ch)
 
 	handler := handlers.NewHandler(postgresStore, postgresStore, sessionStore, publisher)

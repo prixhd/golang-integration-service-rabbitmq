@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"go-integration-service-rabbitmq/internal/models"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type PostgresStorage struct {
@@ -24,9 +26,14 @@ func (s *PostgresStorage) SaveUser(user models.User) error {
 	)
 
 	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return fmt.Errorf("insert user: %w", ErrUserExists)
+		}
+
 		return fmt.Errorf("insert user: %w", err)
 	}
-
 	return nil
 }
 

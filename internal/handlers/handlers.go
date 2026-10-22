@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
@@ -324,7 +325,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.users.SaveUser(user); err != nil {
-		http.Error(w, "User already exists", http.StatusConflict)
+		if errors.Is(err, storage.ErrUserExists) {
+			http.Error(w, "User already exists", http.StatusConflict)
+			return
+		}
+
+		http.Error(w, "Failed to save user", http.StatusInternalServerError)
 		return
 	}
 

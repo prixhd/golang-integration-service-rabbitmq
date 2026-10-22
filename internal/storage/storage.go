@@ -1,6 +1,11 @@
 package storage
 
-import "go-integration-service-rabbitmq/internal/models"
+import (
+	"errors"
+	"go-integration-service-rabbitmq/internal/models"
+)
+
+var ErrUserExists = errors.New("user already exists")
 
 type TaskStorage interface {
 	Save(task models.Task) error
