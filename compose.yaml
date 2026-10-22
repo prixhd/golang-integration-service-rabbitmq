@@ -27,6 +27,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
   processor:
     build:
       context: .
@@ -98,8 +100,18 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/codeprocessor.json:/var/lib/grafana/dashboards/codeprocessor.json:ro
     depends_on:
       - prometheus
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 volumes:
   postgres_data:
   redis_data:

@@ -1,0 +1,15 @@
+FROM golang:1.26-alpine AS builder
+
+RUN go install github.com/rubenv/sql-migrate/...@latest
+
+FROM alpine:3.20
+
+COPY --from=builder /go/bin/sql-migrate /usr/local/bin/sql-migrate
+
+WORKDIR /app
+
+COPY migrations ./migrations
+COPY dbconfig.yml ./dbconfig.yml
+
+ENTRYPOINT ["sql-migrate"]
+CMD ["up", "-env=docker"]
