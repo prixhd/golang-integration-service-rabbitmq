@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -278,4 +279,47 @@ func TestRunCodePythonError(t *testing.T) {
 	}
 
 	t.Log("Python runtime error handled successfully")
+}
+
+func TestRunCodeTimeout(t *testing.T) {
+	cli, err := NewDockerClient()
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	defer cli.Close()
+
+	if err := CheckDocker(cli); err != nil {
+		t.Skipf("Docker is unavailable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		2*time.Second,
+	)
+	defer cancel()
+
+	start := time.Now()
+
+	_, err = RunCode(
+		ctx,
+		cli,
+		"while True:\n    pass",
+		"python3",
+	)
+
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf(
+			"expected context deadline exceeded, got: %v",
+			err,
+		)
+	}
+
+	if elapsed > 5*time.Second {
+		t.Fatalf(
+			"timeout was not respected: execution took %s",
+			elapsed,
+		)
+	}
 }

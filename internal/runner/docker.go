@@ -69,10 +69,31 @@ func runExec(
 
 	defer execAttach.Close()
 
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			execAttach.Close()
+		case <-done:
+			return
+		}
+	}()
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	_, err = stdcopy.StdCopy(&stdout, &stderr, execAttach.Reader)
+	_, err = stdcopy.StdCopy(
+		&stdout,
+		&stderr,
+		execAttach.Reader,
+	)
+
+	if ctx.Err() != nil {
+		return stdout.String() + stderr.String(), 0, ctx.Err()
+	}
+
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to read exec output: %w", err)
 	}
