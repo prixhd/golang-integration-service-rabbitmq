@@ -8,6 +8,7 @@ import (
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -121,6 +122,7 @@ func (h *Handler) CommitMiddleware(next http.HandlerFunc, secret string) http.Ha
 // @Router /task [post]
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var task CreateTaskRequest
+	validTranslators := []string{"python3", "gcc", "clang", "g++", "clang++"}
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -136,6 +138,11 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	if task.Code == "" || task.Translator == "" {
 		http.Error(w, "code and translator are required", http.StatusBadRequest)
+		return
+	}
+
+	if !slices.Contains(validTranslators, task.Translator) {
+		http.Error(w, "Unsupported translator. Allowed: python3, gcc, clang, g++, clang++", http.StatusBadRequest)
 		return
 	}
 
