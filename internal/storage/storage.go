@@ -6,6 +6,7 @@ import (
 )
 
 var ErrUserExists = errors.New("user already exists")
+var ErrNotFound = errors.New("not found")
 
 type TaskStorage interface {
 	Save(task models.Task) error

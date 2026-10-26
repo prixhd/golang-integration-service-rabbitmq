@@ -40,7 +40,7 @@ func (s *RedisStorage) GetSession(sessionID string) (models.Session, error) {
 	).Result()
 
 	if errors.Is(err, redis.Nil) {
-		return models.Session{}, fmt.Errorf("session %s not found: %w", sessionID, err)
+		return models.Session{}, fmt.Errorf("session %s not found: %w", sessionID, ErrNotFound)
 	}
 
 	if err != nil {

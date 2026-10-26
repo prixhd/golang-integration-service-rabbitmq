@@ -7,6 +7,7 @@ import (
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -83,8 +84,16 @@ func (h *Handler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		if _, err := h.sessions.GetSession(authToken); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		_, err := h.sessions.GetSession(authToken)
+
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			log.Printf("failed to get session: %v", err)
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -219,7 +228,12 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	task, err := h.tasks.Get(id)
 
 	if err != nil {
-		http.Error(w, "This task not found", http.StatusNotFound)
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "This status not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("failed to get status: %v", err)
+		http.Error(w, "Service to get status unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -264,7 +278,12 @@ func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 	task, err := h.tasks.Get(id)
 
 	if err != nil {
-		http.Error(w, "This task not found", http.StatusNotFound)
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "This task not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("failed to get result: %v", err)
+		http.Error(w, "Service to get result unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -382,7 +401,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.users.GetUserByLogin(reg.Username)
 
 	if err != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("failed to get user by login: %v", err)
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -458,17 +482,22 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 	task, err := h.tasks.Get(commit.TaskID)
 
 	if err != nil {
-		http.Error(w, "task_id not found", http.StatusNotFound)
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "task_id not found", http.StatusNotFound)
+			return
+		}
+
+		log.Printf("failed to get task for commit: %v", err)
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	task.Status = models.StatusReady
 	task.Result = commit.Result
 
-	err = h.tasks.Save(task)
-
-	if err != nil {
-		http.Error(w, "failed to save task", http.StatusInternalServerError)
+	if err := h.tasks.Save(task); err != nil {
+		log.Printf("failed to save task result: %v", err)
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 

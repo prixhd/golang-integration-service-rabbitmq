@@ -46,7 +46,7 @@ func (s *PostgresStorage) GetUserByLogin(login string) (models.User, error) {
 	).Scan(&user.ID, &user.Login, &user.PasswordHash)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return models.User{}, fmt.Errorf("user %s not found: %w", login, err)
+		return models.User{}, fmt.Errorf("user %s not found: %w", login, ErrNotFound)
 	} else if err != nil {
 		return models.User{}, fmt.Errorf("select user by login: %w", err)
 	}
@@ -87,7 +87,7 @@ func (s *PostgresStorage) Get(id string) (models.Task, error) {
 	).Scan(&task.ID, &task.Code, &task.Translator, &task.Status, &task.Result)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return models.Task{}, fmt.Errorf("task %s not found: %w", id, err)
+		return models.Task{}, fmt.Errorf("task %s not found: %w", id, ErrNotFound)
 	} else if err != nil {
 		return models.Task{}, fmt.Errorf("select task by id: %w", err)
 	}
