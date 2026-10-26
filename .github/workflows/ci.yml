@@ -19,8 +19,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build code runner image
-        run: docker build -t code-runner:latest -f processor/Dockerfile processor/
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        run: python -m pip install pytest requests
 
       - name: Run Go tests
         run: go test ./...
+
+      - name: Run integration tests
+        run: make test-integration
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Stop Docker Compose
+        if: always()
+        run: docker compose down

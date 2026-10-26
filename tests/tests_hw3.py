@@ -1,124 +1,167 @@
-import base64
+import os
+import time
+import uuid
+
 import pytest
 import requests
-import uuid
-import time
 
-BASE_URL = "http://127.0.0.1:8000"
 
-@pytest.fixture(scope='module')
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
+REQUEST_TIMEOUT = 5
+
+
+@pytest.fixture(scope="module")
 def user_data():
-    username = f'user_{uuid.uuid4()}'
-    password = 'password228'
-    return {'username': username, 'password': password}
+    return {
+        "username": f"user_{uuid.uuid4()}",
+        "password": "password228",
+    }
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope="module")
 def auth_token(user_data):
-    register_url = f"{BASE_URL}/register"
-    login_url = f"{BASE_URL}/login"
+    response = requests.post(
+        f"{BASE_URL}/register",
+        json=user_data,
+        timeout=REQUEST_TIMEOUT,
+    )
+    assert response.status_code == 201, response.text
 
-    response = requests.post(register_url, json=user_data)
-    assert response.status_code in (201, 409)
-
-    response = requests.post(login_url, json=user_data)
-    assert response.status_code == 200
+    response = requests.post(
+        f"{BASE_URL}/login",
+        json=user_data,
+        timeout=REQUEST_TIMEOUT,
+    )
+    assert response.status_code == 200, response.text
 
     data = response.json()
-    assert 'token' in data
+    assert "token" in data
 
-    return data['token']
+    return data["token"]
 
-def test_register_user(user_data):
-    register_url = f"{BASE_URL}/register"
-    response = requests.post(register_url, json=user_data)
-    assert response.status_code == 201
 
-def test_login_user(user_data):
-    login_url = f"{BASE_URL}/login"
-    response = requests.post(login_url, json=user_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert 'token' in data
+def test_register_user():
+    user = {
+        "username": f"user_{uuid.uuid4()}",
+        "password": "password228",
+    }
+
+    response = requests.post(
+        f"{BASE_URL}/register",
+        json=user,
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_login_user(auth_token):
+    assert auth_token
+
 
 def get_code_processor_payload():
-    return {"translator": "python3", "code": "print('Hello, stdout world!')"}
+    return {
+        "translator": "python3",
+        "code": "print('Hello, stdout world!')",
+    }
 
-def get_image_processor_payload():
-    with open("static/sigma.png", "rb") as image_file:
-        image_bytes = image_file.read()
 
-    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-    return {"filter": {"name": "Negative"}, "image": image_base64}
+def create_task(auth_token):
+    response = requests.post(
+        f"{BASE_URL}/task",
+        headers={"Authorization": f"Bearer {auth_token}"},
+        json=get_code_processor_payload(),
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    assert response.status_code == 201, response.text
+
+    data = response.json()
+    assert "task_id" in data
+
+    return data["task_id"]
 
 def test_create_task(auth_token):
-    task_url = f"{BASE_URL}/task"
-    headers = {'Authorization': f'Bearer {auth_token}'}
-
-    # payload = dict()
-    payload = get_code_processor_payload()
-    # payload = get_image_processor_payload()
-
-
-    if len(payload) == 0:
-        raise NotImplemented("Choose one of the variants for payload!")
-
-    response = requests.post(task_url, headers=headers, json=payload) 
-
-    assert response.status_code == 201
-    data = response.json()
-    assert 'task_id' in data
-
-    return data['task_id']
+    task_id = create_task(auth_token)
+    assert task_id
 
 def test_task_status_and_result(auth_token):
-    task_id = test_create_task(auth_token)
+    task_id = create_task(auth_token)
+
+    headers = {"Authorization": f"Bearer {auth_token}"}
+
     status_url = f"{BASE_URL}/status/{task_id}"
     result_url = f"{BASE_URL}/result/{task_id}"
-    headers = {'Authorization': f'Bearer {auth_token}'}
 
-    retry = 10
-    while retry >= 0:
-        response = requests.get(status_url, headers=headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert 'status' in data
-        
-        if data['status'] == 'ready':
+    deadline = time.monotonic() + 60
+
+    while time.monotonic() < deadline:
+        response = requests.get(
+            status_url,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        assert response.status_code == 200, response.text
+
+        status = response.json()["status"]
+
+        if status == "ready":
             break
-         
-        assert data['status'] == 'in_progress', f'undefined status: {data['status']}!'
-        retry -= 1
-        time.sleep(3)
-    assert retry > 0, "task is still in progress!"
 
-    response = requests.get(result_url, headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert 'result' in data
+        assert status == "in_progress", f"Unexpected status: {status}"
+
+        time.sleep(2)
+    else:
+        pytest.fail("Task did not become ready within 60 seconds")
+
+    response = requests.get(
+        result_url,
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["result"] == "Hello, stdout world!\n"
+
 
 def test_task_not_found(auth_token):
     invalid_task_id = str(uuid.uuid4())
-    status_url = f"{BASE_URL}/status/{invalid_task_id}"
-    result_url = f"{BASE_URL}/result/{invalid_task_id}"
-    headers = {'Authorization': f'Bearer {auth_token}'}
 
-    response = requests.get(status_url, headers=headers)
+    headers = {"Authorization": f"Bearer {auth_token}"}
+
+    response = requests.get(
+        f"{BASE_URL}/status/{invalid_task_id}",
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
+    )
     assert response.status_code == 404
 
-    response = requests.get(result_url, headers=headers)
+    response = requests.get(
+        f"{BASE_URL}/result/{invalid_task_id}",
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
+    )
     assert response.status_code == 404
+
 
 def test_unauthorized_access():
     invalid_task_id = str(uuid.uuid4())
-    status_url = f"{BASE_URL}/status/{invalid_task_id}"
-    result_url = f"{BASE_URL}/result/{invalid_task_id}"
-    task_url = f"{BASE_URL}/task"
 
-    response = requests.post(task_url)
+    response = requests.post(
+        f"{BASE_URL}/task",
+        timeout=REQUEST_TIMEOUT,
+    )
     assert response.status_code == 401
 
-    response = requests.get(status_url)
+    response = requests.get(
+        f"{BASE_URL}/status/{invalid_task_id}",
+        timeout=REQUEST_TIMEOUT,
+    )
     assert response.status_code == 401
 
-    response = requests.get(result_url)
+    response = requests.get(
+        f"{BASE_URL}/result/{invalid_task_id}",
+        timeout=REQUEST_TIMEOUT,
+    )
     assert response.status_code == 401
