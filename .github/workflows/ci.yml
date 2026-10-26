@@ -27,6 +27,9 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install pytest requests
 
+      - name: Build code runner image
+        run: docker build -t code-runner:latest -f processor/Dockerfile processor/
+
       - name: Run Go tests
         run: go test ./...
 
