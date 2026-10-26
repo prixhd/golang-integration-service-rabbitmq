@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go-integration-service-rabbitmq/internal/commit"
 	"go-integration-service-rabbitmq/internal/metrics"
@@ -123,11 +124,19 @@ func run() error {
 		cancel()
 
 		if err != nil {
-			return fmt.Errorf(
-				"failed to run task %s: %w",
-				taskMessage.TaskID,
-				err,
-			)
+			if errors.Is(err, context.DeadlineExceeded) {
+				result = "Execution time limit exceed (10 sec)"
+				log.Printf(
+					"Task %s exceed execution time limit",
+					taskMessage.TaskID,
+				)
+			} else {
+				return fmt.Errorf(
+					"failed to run task %s: %w",
+					taskMessage.TaskID,
+					err,
+				)
+			}
 		}
 
 		log.Printf("Task %s result: %s", taskMessage.TaskID, result)
