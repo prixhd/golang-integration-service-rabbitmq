@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -11,6 +12,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
+
+var ErrUnsupportedTranslator = errors.New("unsupported translator")
+var ErrContainerPreparation = errors.New("container preparation failed")
 
 func NewDockerClient() (*client.Client, error) {
 	cli, err := client.NewClientWithOpts(
@@ -157,7 +161,11 @@ func RunCode(
 		}
 		command = []string{"/build/main"}
 	default:
-		return "", fmt.Errorf("unsupported translator: %s", translator)
+		return "", fmt.Errorf(
+			"%w: %s",
+			ErrUnsupportedTranslator,
+			translator,
+		)
 	}
 
 	config := &container.Config{
@@ -193,7 +201,11 @@ func RunCode(
 	)
 
 	if err != nil {
-		return "", fmt.Errorf("error with container create: %w", err)
+		return "", fmt.Errorf(
+			"%w: create container: %v",
+			ErrContainerPreparation,
+			err,
+		)
 	}
 
 	defer func() {
@@ -211,7 +223,11 @@ func RunCode(
 
 	err = cli.ContainerStart(ctx, response.ID, container.StartOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to start container : %w", err)
+		return "", fmt.Errorf(
+			"%w: start container: %v",
+			ErrContainerPreparation,
+			err,
+		)
 	}
 
 	archive, err := createCodeArchive(filename, code)
@@ -226,8 +242,13 @@ func RunCode(
 		archive,
 		container.CopyToContainerOptions{},
 	)
+
 	if err != nil {
-		return "", fmt.Errorf("failed to copy code into container: %w", err)
+		return "", fmt.Errorf(
+			"%w: copy code into container: %v",
+			ErrContainerPreparation,
+			err,
+		)
 	}
 
 	if compileCommand != nil {

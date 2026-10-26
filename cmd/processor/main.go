@@ -15,8 +15,56 @@ import (
 	"os"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+func executeWithRetry(
+	cli *client.Client,
+	task models.TaskMessage,
+) (string, error) {
+	const maxAttempts = 3
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			10*time.Second,
+		)
+
+		result, err := runner.RunCode(
+			ctx,
+			cli,
+			task.Code,
+			task.Translator,
+		)
+
+		cancel()
+
+		if err == nil {
+			return result, nil
+		}
+
+		if !errors.Is(err, runner.ErrContainerPreparation) {
+			return result, err
+		}
+
+		if attempt == maxAttempts {
+			return result, err
+		}
+
+		log.Printf(
+			"Task %s: container preparation failed, retry %d/%d: %v",
+			task.TaskID,
+			attempt,
+			maxAttempts,
+			err,
+		)
+
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+
+	return "", fmt.Errorf("unexpected retry loop termination")
+}
 
 func run() error {
 	// prometeus registr metrics
@@ -107,21 +155,12 @@ func run() error {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
 		start := time.Now()
-		result, err := runner.RunCode(
-			ctx,
-			cli,
-			taskMessage.Code,
-			taskMessage.Translator,
-		)
+		result, err := executeWithRetry(cli, taskMessage)
 
 		// prometeus CodeProcessor histogram
 		duration := time.Since(start).Seconds()
 		metrics.TaskDuration.WithLabelValues(taskMessage.Translator).Observe(duration)
-
-		cancel()
 
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -130,9 +169,21 @@ func run() error {
 					"Task %s exceed execution time limit",
 					taskMessage.TaskID,
 				)
+			} else if errors.Is(err, runner.ErrUnsupportedTranslator) {
+				result = err.Error()
+			} else if errors.Is(err, runner.ErrContainerPreparation) {
+				result = "Execution failed: unable to prepare Docker container after 3 attempts"
+
+				log.Printf(
+					"Task %s failed after container preparation retries: %v",
+					taskMessage.TaskID,
+					err,
+				)
 			} else {
-				return fmt.Errorf(
-					"failed to run task %s: %w",
+				result = "Execution failed: internal code runner error"
+
+				log.Printf(
+					"Task %s failed during execution: %v",
 					taskMessage.TaskID,
 					err,
 				)
@@ -143,7 +194,7 @@ func run() error {
 
 		commitCtx, commitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 
-		err = commit.SendResult(
+		err = commit.SendResultWithRetry(
 			commitCtx,
 			commitURL,
 			commitSecret,
