@@ -331,6 +331,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(reg.Password) > 72 {
+		http.Error(w, "Length password is too large. Max 72 bytes", http.StatusBadRequest)
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword(
 		[]byte(reg.Password),
 		bcrypt.DefaultCost,
