@@ -66,6 +66,57 @@ func executeWithRetry(
 	return "", fmt.Errorf("unexpected retry loop termination")
 }
 
+func commitUntilSuccess(
+	url string,
+	secret string,
+	taskID string,
+	result string,
+) error {
+	for {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			10*time.Second,
+		)
+
+		err := commit.SendResultWithRetry(
+			ctx,
+			url,
+			secret,
+			taskID,
+			result,
+		)
+
+		cancel()
+
+		if err == nil {
+			return nil
+		}
+
+		var statusErr *commit.HTTPStatusError
+
+		if errors.As(err, &statusErr) {
+			status := statusErr.StatusCode
+
+			if status != http.StatusTooManyRequests &&
+				(status < 500 || status >= 600) {
+				return fmt.Errorf(
+					"permanent commit error for task %s: %w",
+					taskID,
+					err,
+				)
+			}
+		}
+
+		log.Printf(
+			"Task %s: commit failed, retrying in 5 seconds: %v",
+			taskID,
+			err,
+		)
+
+		time.Sleep(5 * time.Second)
+	}
+}
+
 func run() error {
 	// prometeus registr metrics
 	metrics.RegisterProcessorMetrics()
@@ -192,17 +243,12 @@ func run() error {
 
 		log.Printf("Task %s result: %s", taskMessage.TaskID, result)
 
-		commitCtx, commitCancel := context.WithTimeout(context.Background(), 10*time.Second)
-
-		err = commit.SendResultWithRetry(
-			commitCtx,
+		err = commitUntilSuccess(
 			commitURL,
 			commitSecret,
 			taskMessage.TaskID,
 			result,
 		)
-
-		commitCancel()
 
 		if err != nil {
 			return fmt.Errorf(
