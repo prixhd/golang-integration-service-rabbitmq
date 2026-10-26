@@ -174,7 +174,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.publisher.PublishTask(messageData); err != nil {
-		http.Error(w, "failed public task to rabbitmq", http.StatusInternalServerError)
+		http.Error(w, "RabbitMQ temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
 

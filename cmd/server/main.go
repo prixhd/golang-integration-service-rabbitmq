@@ -44,22 +44,12 @@ func run() error {
 		return fmt.Errorf("COMMIT_SECRET is required")
 	}
 
-	conn, err := rabbitmq.NewConnection(url)
+	publisher, err := rabbitmq.NewPublisher(url)
 	if err != nil {
-		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		return fmt.Errorf("failed to initialize RabbitMQ publisher: %w", err)
 	}
-	defer conn.Close()
+	defer publisher.Close()
 
-	ch, err := conn.Channel()
-	if err != nil {
-		return fmt.Errorf("failed to create rabbitmq channel: %w", err)
-	}
-	defer ch.Close()
-
-	_, err = rabbitmq.DeclareQueue(ch)
-	if err != nil {
-		return fmt.Errorf("failed to declare queue rabbitmq: %w", err)
-	}
 	// подключение PostgreSql
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	db, err := database.NewPostgres(ctx, databaseURL)
@@ -85,7 +75,6 @@ func run() error {
 
 	postgresStore := storage.NewPostgresStorage(db)
 	sessionStore := storage.NewRedisStorage(redisClient)
-	publisher := rabbitmq.NewPublisher(ch)
 
 	handler := handlers.NewHandler(postgresStore, postgresStore, sessionStore, publisher)
 

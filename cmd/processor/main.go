@@ -225,7 +225,7 @@ func run() error {
 
 	}
 
-	return nil
+	return fmt.Errorf("RabbitMQ deliveries channel closed unexpectedly")
 }
 
 func main() {
