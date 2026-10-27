@@ -15,6 +15,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/docker/docker/client"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -206,6 +208,29 @@ func run() error {
 			continue
 		}
 
+		if taskMessage.TaskID == "" ||
+			taskMessage.Code == "" ||
+			taskMessage.Translator == "" {
+
+			log.Printf("invalid task message: missing required fields")
+
+			if err := msg.Nack(false, false); err != nil {
+				return fmt.Errorf("failed to nack invalid task: %w", err)
+			}
+
+			continue
+		}
+
+		if _, err := uuid.Parse(taskMessage.TaskID); err != nil {
+			log.Printf("invalid task ID: %q", taskMessage.TaskID)
+
+			if nackErr := msg.Nack(false, false); nackErr != nil {
+				return fmt.Errorf("failed to nack invalid task ID: %w", nackErr)
+			}
+
+			continue
+		}
+
 		start := time.Now()
 		result, err := executeWithRetry(cli, taskMessage)
 
@@ -251,6 +276,39 @@ func run() error {
 		)
 
 		if err != nil {
+			var statusErr *commit.HTTPStatusError
+
+			if errors.As(err, &statusErr) {
+				if statusErr.StatusCode == http.StatusUnauthorized {
+					return fmt.Errorf(
+						"commit authorization failed for task %s: %w",
+						taskMessage.TaskID,
+						err,
+					)
+				}
+
+				if statusErr.StatusCode >= 400 &&
+					statusErr.StatusCode < 500 &&
+					statusErr.StatusCode != http.StatusTooManyRequests {
+
+					log.Printf(
+						"Task %s: permanent commit error, moving to DLQ: %v",
+						taskMessage.TaskID,
+						err,
+					)
+
+					if nackErr := msg.Nack(false, false); nackErr != nil {
+						return fmt.Errorf(
+							"failed to nack task %s: %w",
+							taskMessage.TaskID,
+							nackErr,
+						)
+					}
+
+					continue
+				}
+			}
+
 			return fmt.Errorf(
 				"failed to commit task %s: %w",
 				taskMessage.TaskID,

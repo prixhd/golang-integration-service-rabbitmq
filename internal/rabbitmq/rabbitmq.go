@@ -69,6 +69,43 @@ func NewPublisher(url string) (*AMQPPublisher, error) {
 	return p, nil
 }
 
+func DeclareDeadLetterQueue(ch *amqp.Channel) error {
+	if err := ch.ExchangeDeclare(
+		"tasks.dlx",
+		"direct",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		return fmt.Errorf("failed to declare DLX: %w", err)
+	}
+
+	if _, err := ch.QueueDeclare(
+		"tasks.dlq",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		return fmt.Errorf("failed to declare DLQ: %w", err)
+	}
+
+	if err := ch.QueueBind(
+		"tasks.dlq",
+		"tasks.dead",
+		"tasks.dlx",
+		false,
+		nil,
+	); err != nil {
+		return fmt.Errorf("failed to bind DLQ: %w", err)
+	}
+
+	return nil
+}
+
 func (p *AMQPPublisher) PublishTask(body []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -129,14 +166,22 @@ func NewConnection(url string) (*amqp.Connection, error) {
 }
 
 func DeclareQueue(ch *amqp.Channel) (amqp.Queue, error) {
+	if err := DeclareDeadLetterQueue(ch); err != nil {
+		return amqp.Queue{}, err
+	}
+
 	q, err := ch.QueueDeclare(
 		"tasks",
 		true,
 		false,
 		false,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange":    "tasks.dlx",
+			"x-dead-letter-routing-key": "tasks.dead",
+		},
 	)
+
 	if err != nil {
 		return amqp.Queue{}, err
 	}
