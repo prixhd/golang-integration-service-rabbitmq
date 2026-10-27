@@ -7,6 +7,7 @@ import (
 	"go-integration-service-rabbitmq/internal/models"
 	"go-integration-service-rabbitmq/internal/rabbitmq"
 	"go-integration-service-rabbitmq/internal/storage"
+	"io"
 	"log"
 	"net/http"
 	"slices"
@@ -66,6 +67,45 @@ func NewHandler(
 		sessions:  sessions,
 		publisher: publisher,
 	}
+}
+
+func decodeJSON(
+	w http.ResponseWriter,
+	r *http.Request,
+	dst any,
+	maxBytes int64,
+) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+
+	decoder := json.NewDecoder(r.Body)
+
+	if err := decoder.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		}
+
+		return false
+	}
+
+	var extra any
+	err := decoder.Decode(&extra)
+
+	if err == io.EOF {
+		return true
+	}
+
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+	} else {
+		http.Error(w, "Request body must contain a single JSON object", http.StatusBadRequest)
+	}
+
+	return false
 }
 
 func (h *Handler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -138,10 +178,12 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&task)
+	if !decodeJSON(w, r, &task, 64*1024) {
+		return
+	}
 
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if len(task.Code) > 60*1024 {
+		http.Error(w, "Code must not exceed 60 KiB", http.StatusBadRequest)
 		return
 	}
 
@@ -319,15 +361,17 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&reg)
-
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeJSON(w, r, &reg, 4*1024) {
 		return
 	}
 
 	if reg.Username == "" || reg.Password == "" {
 		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if len(reg.Username) > 64 {
+		http.Error(w, "Username is too large. Must not exceed 64 bytes", http.StatusBadRequest)
 		return
 	}
 
@@ -391,15 +435,22 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&reg)
-
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeJSON(w, r, &reg, 4*1024) {
 		return
 	}
 
 	if reg.Username == "" || reg.Password == "" {
 		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if len(reg.Username) > 64 {
+		http.Error(w, "Username must not exceed 64 bytes", http.StatusBadRequest)
+		return
+	}
+
+	if len(reg.Password) > 72 {
+		http.Error(w, "Password must not exceed 72 bytes", http.StatusBadRequest)
 		return
 	}
 
@@ -472,15 +523,17 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&commit)
-
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !decodeJSON(w, r, &commit, 128*1024) {
 		return
 	}
 
 	if commit.TaskID == "" {
 		http.Error(w, "task_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if len(commit.Result) > 120*1024 {
+		http.Error(w, "Result must not exceed 120 KiB", http.StatusBadRequest)
 		return
 	}
 
