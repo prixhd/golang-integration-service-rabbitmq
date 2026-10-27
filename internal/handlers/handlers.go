@@ -215,6 +215,11 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
+		return
+	}
+
 	task, err := h.tasks.Get(id)
 
 	if err != nil {
@@ -262,6 +267,11 @@ func (h *Handler) GetResult(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/result/")
 	if id == "" {
 		http.Error(w, "Task ID is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
 		return
 	}
 
@@ -471,6 +481,11 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request) {
 
 	if commit.TaskID == "" {
 		http.Error(w, "task_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := uuid.Parse(commit.TaskID); err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
 		return
 	}
 
