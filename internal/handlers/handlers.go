@@ -165,25 +165,15 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Result:     "",
 	}
 
-	if err := h.tasks.Save(newTask); err != nil {
-		http.Error(w, "Failed to save task", http.StatusInternalServerError)
-		return
-	}
-
 	message := models.TaskMessage{
 		TaskID:     id,
 		Translator: task.Translator,
 		Code:       task.Code,
 	}
 
-	messageData, err := json.Marshal(message)
-	if err != nil {
-		http.Error(w, "failed to convert json to []byte", http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.publisher.PublishTask(messageData); err != nil {
-		http.Error(w, "RabbitMQ temporarily unavailable", http.StatusServiceUnavailable)
+	if err := h.tasks.SaveWithOutbox(newTask, message); err != nil {
+		log.Printf("failed to save task with outbox: %v", err)
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 

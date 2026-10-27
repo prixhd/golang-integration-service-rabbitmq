@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go-integration-service-rabbitmq/internal/models"
@@ -93,4 +95,106 @@ func (s *PostgresStorage) Get(id string) (models.Task, error) {
 	}
 
 	return task, nil
+}
+
+func (s *PostgresStorage) SaveWithOutbox(
+	task models.Task,
+	message models.TaskMessage,
+) error {
+
+	payload, err := json.Marshal(message)
+
+	if err != nil {
+		return fmt.Errorf("failed to parse: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		`INSERT INTO tasks (id, code, translator, status, result)
+		VALUES ($1, $2, $3, $4, $5)`,
+		task.ID,
+		task.Code,
+		task.Translator,
+		task.Status,
+		task.Result,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert task: %w", err)
+	}
+
+	_, err = tx.Exec(
+		`INSERT INTO outbox (task_id, payload)
+		VALUES ($1, $2)`,
+		task.ID,
+		payload,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert outbox event: %w", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	return nil
+}
+
+func (s *PostgresStorage) GetPendingEvents(limit int) ([]OutboxEvent, error) {
+	rows, err := s.db.Query(
+		`SELECT id, task_id, payload
+         FROM outbox
+         WHERE published_at IS NULL
+         ORDER BY id
+         LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending outbox events: %w", err)
+	}
+	defer rows.Close()
+
+	events := []OutboxEvent{}
+
+	for rows.Next() {
+		var event OutboxEvent
+
+		if err := rows.Scan(
+			&event.ID,
+			&event.TaskID,
+			&event.Payload,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan outbox event: %w", err)
+		}
+
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate outbox events: %w", err)
+	}
+
+	return events, nil
+}
+
+func (s *PostgresStorage) MarkPublished(id int64) error {
+	_, err := s.db.Exec(
+		`UPDATE outbox
+         SET published_at = NOW()
+         WHERE id = $1`,
+		id,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to mark outbox event as published: %w", err)
+	}
+
+	return nil
 }

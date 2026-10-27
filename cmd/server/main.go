@@ -15,6 +15,8 @@ import (
 
 	"go-integration-service-rabbitmq/internal/database"
 
+	"go-integration-service-rabbitmq/internal/outbox"
+
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -75,6 +77,13 @@ func run() error {
 
 	postgresStore := storage.NewPostgresStorage(db)
 	sessionStore := storage.NewRedisStorage(redisClient)
+
+	outboxWorker := outbox.NewWorker(postgresStore, publisher)
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	go outboxWorker.Run(workerCtx)
 
 	handler := handlers.NewHandler(postgresStore, postgresStore, sessionStore, publisher)
 
