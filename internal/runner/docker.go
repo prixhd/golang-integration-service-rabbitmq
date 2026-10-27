@@ -16,6 +16,33 @@ import (
 var ErrUnsupportedTranslator = errors.New("unsupported translator")
 var ErrContainerPreparation = errors.New("container preparation failed")
 
+const maxOutputBytes = 64 * 1024
+
+var ErrOutputLimitExceeded = errors.New("output limit exceeded")
+
+type limitedOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (o *limitedOutput) Write(p []byte) (int, error) {
+	remaining := o.limit - o.buf.Len()
+
+	if len(p) > remaining {
+		if remaining > 0 {
+			_, _ = o.buf.Write(p[:remaining])
+		}
+
+		return remaining, ErrOutputLimitExceeded
+	}
+
+	return o.buf.Write(p)
+}
+
+func (o *limitedOutput) String() string {
+	return o.buf.String()
+}
+
 func NewDockerClient() (*client.Client, error) {
 	cli, err := client.NewClientWithOpts(
 		client.FromEnv,
@@ -47,7 +74,8 @@ func runExec(
 	cli *client.Client,
 	containerID string,
 	command []string,
-) (string, int, error) {
+	output *limitedOutput,
+) (int, error) {
 	execResponse, err := cli.ContainerExecCreate(
 		ctx,
 		containerID,
@@ -58,7 +86,7 @@ func runExec(
 		},
 	)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create exec: %w", err)
+		return 0, fmt.Errorf("failed to create exec: %w", err)
 	}
 
 	execAttach, err := cli.ContainerExecAttach(
@@ -68,7 +96,7 @@ func runExec(
 	)
 
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to attach exec: %w", err)
+		return 0, fmt.Errorf("failed to attach exec: %w", err)
 	}
 
 	defer execAttach.Close()
@@ -85,29 +113,30 @@ func runExec(
 		}
 	}()
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
 	_, err = stdcopy.StdCopy(
-		&stdout,
-		&stderr,
+		output,
+		output,
 		execAttach.Reader,
 	)
 
 	if ctx.Err() != nil {
-		return stdout.String() + stderr.String(), 0, ctx.Err()
+		return 0, ctx.Err()
+	}
+
+	if errors.Is(err, ErrOutputLimitExceeded) {
+		return 0, ErrOutputLimitExceeded
 	}
 
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to read exec output: %w", err)
+		return 0, fmt.Errorf("failed to read exec output: %w", err)
 	}
 
 	inspect, err := cli.ContainerExecInspect(ctx, execResponse.ID)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to inspect exec: %w", err)
+		return 0, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	return stdout.String() + stderr.String(), inspect.ExitCode, nil
+	return inspect.ExitCode, nil
 }
 
 func RunCode(
@@ -119,6 +148,10 @@ func RunCode(
 	var filename string
 	var command []string
 	var compileCommand []string
+
+	output := &limitedOutput{
+		limit: maxOutputBytes,
+	}
 
 	switch translator {
 	case "python3":
@@ -252,27 +285,34 @@ func RunCode(
 	}
 
 	if compileCommand != nil {
-		compileResult, exitCode, err := runExec(ctx, cli, response.ID, compileCommand)
+		exitCode, err := runExec(ctx, cli, response.ID, compileCommand, output)
+
+		if errors.Is(err, ErrOutputLimitExceeded) {
+			return output.String() + "\nOutput limit exceeded (64 KiB)\n", nil
+		}
 
 		if err != nil {
 			return "", fmt.Errorf("failed to run compiler: %w", err)
 		}
 
 		if exitCode != 0 {
-			return compileResult, nil
+			return output.String(), nil
 		}
-
-		log.Printf("Compilation result: %s", compileResult)
 	}
 
-	result, _, err := runExec(ctx, cli, response.ID, command)
+	_, err = runExec(ctx, cli, response.ID, command, output)
+
+	if errors.Is(err, ErrOutputLimitExceeded) {
+		return output.String() + "\nOutput limit exceeded (64 KiB)\n", nil
+	}
+
 	if err != nil {
 		return "", fmt.Errorf(
 			"failed to execute code: %w; program output: %s",
 			err,
-			result,
+			output.String(),
 		)
 	}
 
-	return result, nil
+	return output.String(), nil
 }
