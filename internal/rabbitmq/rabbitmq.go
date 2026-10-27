@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -12,6 +13,20 @@ import (
 )
 
 var ErrBrokerNotConfirmTask = errors.New("RabbitMQ did not confirm task")
+
+const writeTimeout = 5 * time.Second
+
+type deadlineConn struct {
+	net.Conn
+}
+
+func (c *deadlineConn) Write(p []byte) (int, error) {
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return 0, err
+	}
+
+	return c.Conn.Write(p)
+}
 
 type Publisher interface {
 	PublishTask(body []byte) error
@@ -106,6 +121,15 @@ func DeclareDeadLetterQueue(ch *amqp.Channel) error {
 	return nil
 }
 
+// вызывается когда удерживается p.mu
+func (p *AMQPPublisher) closeBrokenConnection() {
+	if p.conn != nil {
+		if err := p.conn.Close(); err != nil {
+			log.Printf("failed to close broken RabbitMQ connection: %v", err)
+		}
+	}
+}
+
 func (p *AMQPPublisher) PublishTask(body []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -130,12 +154,20 @@ func (p *AMQPPublisher) PublishTask(body []byte) error {
 		})
 
 	if err != nil {
+		p.closeBrokenConnection()
 		return fmt.Errorf("failed to publish task: %w", err)
 	}
 
-	acknowledged, err := confirmation.WaitContext(ctx)
+	confirmCtx, confirmCancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer confirmCancel()
+
+	acknowledged, err := confirmation.WaitContext(confirmCtx)
 
 	if err != nil {
+		p.closeBrokenConnection()
 		return fmt.Errorf("wait for publisher confirm: %w", err)
 	}
 
@@ -156,8 +188,18 @@ func (p *AMQPPublisher) PublishTask(body []byte) error {
 }
 
 func NewConnection(url string) (*amqp.Connection, error) {
-	conn, err := amqp.Dial(url)
+	config := amqp.Config{
+		Dial: func(network, addr string) (net.Conn, error) {
+			conn, err := net.DialTimeout(network, addr, 5*time.Second)
+			if err != nil {
+				return nil, err
+			}
 
+			return &deadlineConn{Conn: conn}, nil
+		},
+	}
+
+	conn, err := amqp.DialConfig(url, config)
 	if err != nil {
 		return nil, err
 	}
