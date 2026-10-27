@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -10,15 +11,18 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+var ErrBrokerNotConfirmTask = errors.New("RabbitMQ did not confirm task")
+
 type Publisher interface {
 	PublishTask(body []byte) error
 }
 
 type AMQPPublisher struct {
-	mu   sync.Mutex
-	url  string
-	conn *amqp.Connection
-	ch   *amqp.Channel
+	returns chan amqp.Return
+	mu      sync.Mutex
+	url     string
+	conn    *amqp.Connection
+	ch      *amqp.Channel
 
 	done chan struct{}
 	wg   sync.WaitGroup
@@ -43,11 +47,20 @@ func NewPublisher(url string) (*AMQPPublisher, error) {
 		return nil, err
 	}
 
+	if err := ch.Confirm(false); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to enable publisher confirms: %w", err)
+	}
+
+	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+
 	p := &AMQPPublisher{
-		url:  url,
-		conn: conn,
-		ch:   ch,
-		done: make(chan struct{}),
+		url:     url,
+		conn:    conn,
+		ch:      ch,
+		returns: returns,
+		done:    make(chan struct{}),
 	}
 
 	p.wg.Add(1)
@@ -67,11 +80,11 @@ func (p *AMQPPublisher) PublishTask(body []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := p.ch.PublishWithContext(
+	confirmation, err := p.ch.PublishWithDeferredConfirmWithContext(
 		ctx,
 		"",
 		"tasks",
-		false,
+		true,
 		false,
 		amqp.Publishing{
 			ContentType:  "application/json",
@@ -79,7 +92,30 @@ func (p *AMQPPublisher) PublishTask(body []byte) error {
 			DeliveryMode: amqp.Persistent,
 		})
 
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to publish task: %w", err)
+	}
+
+	acknowledged, err := confirmation.WaitContext(ctx)
+
+	if err != nil {
+		return fmt.Errorf("wait for publisher confirm: %w", err)
+	}
+
+	if !acknowledged {
+		return fmt.Errorf("failed with confirm: %w", ErrBrokerNotConfirmTask)
+	}
+
+	select {
+	case returned := <-p.returns:
+		return fmt.Errorf(
+			"RabbitMQ returned unroutable message: %s",
+			returned.ReplyText,
+		)
+	default:
+	}
+
+	return nil
 }
 
 func NewConnection(url string) (*amqp.Connection, error) {
@@ -127,6 +163,14 @@ func (p *AMQPPublisher) reconnect() error {
 		return err
 	}
 
+	if err := ch.Confirm(false); err != nil {
+		ch.Close()
+		conn.Close()
+		return fmt.Errorf("failed to enable publisher confirms: %w", err)
+	}
+
+	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+
 	p.mu.Lock()
 
 	oldConn := p.conn
@@ -134,6 +178,7 @@ func (p *AMQPPublisher) reconnect() error {
 
 	p.conn = conn
 	p.ch = ch
+	p.returns = returns
 
 	p.mu.Unlock()
 
