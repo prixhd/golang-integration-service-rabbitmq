@@ -13,7 +13,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/google/uuid"
 
@@ -22,19 +26,20 @@ import (
 )
 
 func executeWithRetry(
+	ctx context.Context,
 	cli *client.Client,
 	task models.TaskMessage,
 ) (string, error) {
 	const maxAttempts = 3
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
+		taskCtx, cancel := context.WithTimeout(
+			ctx,
 			10*time.Second,
 		)
 
 		result, err := runner.RunCode(
-			ctx,
+			taskCtx,
 			cli,
 			task.Code,
 			task.Translator,
@@ -62,26 +67,31 @@ func executeWithRetry(
 			err,
 		)
 
-		time.Sleep(time.Duration(attempt) * time.Second)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
 	}
 
 	return "", fmt.Errorf("unexpected retry loop termination")
 }
 
 func commitUntilSuccess(
+	ctx context.Context,
 	url string,
 	secret string,
 	taskID string,
 	result string,
 ) error {
 	for {
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
+		requestCtx, cancel := context.WithTimeout(
+			ctx,
 			10*time.Second,
 		)
 
 		err := commit.SendResultWithRetry(
-			ctx,
+			requestCtx,
 			url,
 			secret,
 			taskID,
@@ -115,11 +125,15 @@ func commitUntilSuccess(
 			err,
 		)
 
-		time.Sleep(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 
-func run() error {
+func run(ctx context.Context) error {
 	// prometeus registr metrics
 	metrics.RegisterProcessorMetrics()
 
@@ -174,6 +188,13 @@ func run() error {
 		return fmt.Errorf("failed to check docker client: %w", err)
 	}
 
+	cleanupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	if err := runner.CleanupOrphanContainers(cleanupCtx, cli); err != nil {
+		return fmt.Errorf("failed to cleanup orphan containers: %w", err)
+	}
+
 	log.Println("Docker Engine connected successfully")
 
 	if err := ch.Qos(1, 0, false); err != nil {
@@ -196,7 +217,24 @@ func run() error {
 
 	log.Println("CodeProcessor connected to RabbitMQ")
 
-	for msg := range msgs {
+	for {
+		var msg amqp.Delivery
+
+		select {
+		case <-ctx.Done():
+			log.Println("CodeProcessor shutting down")
+			return nil
+
+		case delivery, ok := <-msgs:
+			if !ok {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("RabbitMQ deliveries channel closed unexpectedly")
+			}
+			msg = delivery
+		}
+
 		var taskMessage models.TaskMessage
 
 		err := json.Unmarshal(msg.Body, &taskMessage)
@@ -232,7 +270,11 @@ func run() error {
 		}
 
 		start := time.Now()
-		result, err := executeWithRetry(cli, taskMessage)
+		result, err := executeWithRetry(ctx, cli, taskMessage)
+		if ctx.Err() != nil {
+			log.Printf("Processor is shutting down, task %s will be redelivered", taskMessage.TaskID)
+			return nil
+		}
 
 		// prometeus CodeProcessor histogram
 		duration := time.Since(start).Seconds()
@@ -269,11 +311,20 @@ func run() error {
 		log.Printf("Task %s result: %s", taskMessage.TaskID, result)
 
 		err = commitUntilSuccess(
+			ctx,
 			commitURL,
 			commitSecret,
 			taskMessage.TaskID,
 			result,
 		)
+
+		if ctx.Err() != nil {
+			log.Printf(
+				"Processor is shutting down, task %s will be redelivered",
+				taskMessage.TaskID,
+			)
+			return nil
+		}
 
 		if err != nil {
 			var statusErr *commit.HTTPStatusError
@@ -329,11 +380,17 @@ func run() error {
 
 	}
 
-	return fmt.Errorf("RabbitMQ deliveries channel closed unexpectedly")
 }
 
 func main() {
-	if err := run(); err != nil {
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	if err := run(ctx); err != nil {
 		log.Fatal(err)
 	}
 }

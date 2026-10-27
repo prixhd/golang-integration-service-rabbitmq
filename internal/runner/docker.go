@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
@@ -64,6 +65,35 @@ func CheckDocker(cli *client.Client) error {
 	_, err := cli.Ping(ctx)
 	if err != nil {
 		return fmt.Errorf("docker engine is unavailable: %w", err)
+	}
+
+	return nil
+}
+
+func CleanupOrphanContainers(ctx context.Context, cli *client.Client) error {
+	containers, err := cli.ContainerList(
+		ctx,
+		container.ListOptions{
+			All: true,
+			Filters: filters.NewArgs(
+				filters.Arg("label", "app=go-integration-code-runner"),
+			),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to list runner containers: %w", err)
+	}
+
+	for _, c := range containers {
+		if err := cli.ContainerRemove(
+			ctx,
+			c.ID,
+			container.RemoveOptions{Force: true},
+		); err != nil {
+			return fmt.Errorf("failed to remove orphan container %s: %w", c.ID, err)
+		}
+
+		log.Printf("Removed orphan runner container: %s", c.ID)
 	}
 
 	return nil
@@ -205,6 +235,9 @@ func RunCode(
 		Image: "code-runner:latest",
 		Cmd:   []string{"sleep", "infinity"},
 		User:  "65534:65534",
+		Labels: map[string]string{
+			"app": "go-integration-code-runner",
+		},
 	}
 	pidsLimit := int64(32)
 
@@ -234,6 +267,10 @@ func RunCode(
 	)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
 		return "", fmt.Errorf(
 			"%w: create container: %v",
 			ErrContainerPreparation,
@@ -256,6 +293,10 @@ func RunCode(
 
 	err = cli.ContainerStart(ctx, response.ID, container.StartOptions{})
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
 		return "", fmt.Errorf(
 			"%w: start container: %v",
 			ErrContainerPreparation,
@@ -277,6 +318,10 @@ func RunCode(
 	)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
 		return "", fmt.Errorf(
 			"%w: copy code into container: %v",
 			ErrContainerPreparation,
