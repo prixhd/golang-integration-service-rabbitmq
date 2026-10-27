@@ -36,7 +36,7 @@ func (s *MemoryStorage) Get(id string) (models.Task, error) {
 	task, ok := s.tasks[id]
 
 	if !ok {
-		return models.Task{}, fmt.Errorf("task %s not found", id)
+		return models.Task{}, fmt.Errorf("task %s: %w", id, ErrNotFound)
 	}
 
 	return task, nil
@@ -63,7 +63,7 @@ func (s *MemoryStorage) GetUserByLogin(login string) (models.User, error) {
 	user, exists := s.users[login]
 
 	if !exists {
-		return models.User{}, fmt.Errorf("user %s not found", login)
+		return models.User{}, fmt.Errorf("user %s: %w", login, ErrNotFound)
 	}
 
 	return user, nil
@@ -90,7 +90,7 @@ func (s *MemoryStorage) GetSession(sessionID string) (models.Session, error) {
 	session, exists := s.sessions[sessionID]
 
 	if !exists {
-		return models.Session{}, fmt.Errorf("session %s not found", sessionID)
+		return models.Session{}, fmt.Errorf("session %s: %w", sessionID, ErrNotFound)
 	}
 
 	return session, nil
