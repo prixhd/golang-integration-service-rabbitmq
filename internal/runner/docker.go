@@ -1,0 +1,363 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
+)
+
+var ErrUnsupportedTranslator = errors.New("unsupported translator")
+var ErrContainerPreparation = errors.New("container preparation failed")
+
+const maxOutputBytes = 64 * 1024
+
+var ErrOutputLimitExceeded = errors.New("output limit exceeded")
+
+type limitedOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (o *limitedOutput) Write(p []byte) (int, error) {
+	remaining := o.limit - o.buf.Len()
+
+	if len(p) > remaining {
+		if remaining > 0 {
+			_, _ = o.buf.Write(p[:remaining])
+		}
+
+		return remaining, ErrOutputLimitExceeded
+	}
+
+	return o.buf.Write(p)
+}
+
+func (o *limitedOutput) String() string {
+	return o.buf.String()
+}
+
+func NewDockerClient() (*client.Client, error) {
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return cli, nil
+}
+
+func CheckDocker(cli *client.Client) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := cli.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("docker engine is unavailable: %w", err)
+	}
+
+	return nil
+}
+
+func CleanupOrphanContainers(ctx context.Context, cli *client.Client) error {
+	containers, err := cli.ContainerList(
+		ctx,
+		container.ListOptions{
+			All: true,
+			Filters: filters.NewArgs(
+				filters.Arg("label", "app=go-integration-code-runner"),
+			),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to list runner containers: %w", err)
+	}
+
+	for _, c := range containers {
+		if err := cli.ContainerRemove(
+			ctx,
+			c.ID,
+			container.RemoveOptions{Force: true},
+		); err != nil {
+			return fmt.Errorf("failed to remove orphan container %s: %w", c.ID, err)
+		}
+
+		log.Printf("Removed orphan runner container: %s", c.ID)
+	}
+
+	return nil
+}
+
+func runExec(
+	ctx context.Context,
+	cli *client.Client,
+	containerID string,
+	command []string,
+	output *limitedOutput,
+) (int, error) {
+	execResponse, err := cli.ContainerExecCreate(
+		ctx,
+		containerID,
+		container.ExecOptions{
+			Cmd:          command,
+			AttachStdout: true,
+			AttachStderr: true,
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	execAttach, err := cli.ContainerExecAttach(
+		ctx,
+		execResponse.ID,
+		container.ExecAttachOptions{},
+	)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to attach exec: %w", err)
+	}
+
+	defer execAttach.Close()
+
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			execAttach.Close()
+		case <-done:
+			return
+		}
+	}()
+
+	_, err = stdcopy.StdCopy(
+		output,
+		output,
+		execAttach.Reader,
+	)
+
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+
+	if errors.Is(err, ErrOutputLimitExceeded) {
+		return 0, ErrOutputLimitExceeded
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to read exec output: %w", err)
+	}
+
+	inspect, err := cli.ContainerExecInspect(ctx, execResponse.ID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to inspect exec: %w", err)
+	}
+
+	return inspect.ExitCode, nil
+}
+
+func RunCode(
+	ctx context.Context,
+	cli *client.Client,
+	code string,
+	translator string,
+) (string, error) {
+	var filename string
+	var command []string
+	var compileCommand []string
+
+	output := &limitedOutput{
+		limit: maxOutputBytes,
+	}
+
+	switch translator {
+	case "python3":
+		filename = "main.py"
+		command = []string{"python3", "/workspace/main.py"}
+	case "gcc":
+		filename = "main.c"
+		compileCommand = []string{
+			"gcc",
+			"/workspace/main.c",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "clang":
+		filename = "main.c"
+		compileCommand = []string{
+			"clang",
+			"/workspace/main.c",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "g++":
+		filename = "main.cpp"
+		compileCommand = []string{
+			"g++",
+			"/workspace/main.cpp",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	case "clang++":
+		filename = "main.cpp"
+		compileCommand = []string{
+			"clang++",
+			"/workspace/main.cpp",
+			"-o",
+			"/build/main",
+		}
+		command = []string{"/build/main"}
+	default:
+		return "", fmt.Errorf(
+			"%w: %s",
+			ErrUnsupportedTranslator,
+			translator,
+		)
+	}
+
+	config := &container.Config{
+		Image: "code-runner:latest",
+		Cmd:   []string{"sleep", "infinity"},
+		User:  "65534:65534",
+		Labels: map[string]string{
+			"app": "go-integration-code-runner",
+		},
+	}
+	pidsLimit := int64(32)
+
+	hostConfig := &container.HostConfig{
+		NetworkMode:    "none",
+		ReadonlyRootfs: false,
+		CapDrop:        []string{"ALL"},
+		SecurityOpt:    []string{"no-new-privileges"},
+		Resources: container.Resources{
+			Memory:    128 * 1024 * 1024,
+			NanoCPUs:  500_000_000,
+			PidsLimit: &pidsLimit,
+		},
+		Tmpfs: map[string]string{
+			"/tmp":   "rw,noexec,nosuid,nodev,size=16m",
+			"/build": "rw,exec,nosuid,nodev,size=32m,mode=1777",
+		},
+	}
+
+	response, err := cli.ContainerCreate(
+		ctx,
+		config,
+		hostConfig,
+		nil,
+		nil,
+		"",
+	)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
+		return "", fmt.Errorf(
+			"%w: create container: %v",
+			ErrContainerPreparation,
+			err,
+		)
+	}
+
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := cli.ContainerRemove(
+			cleanupCtx,
+			response.ID,
+			container.RemoveOptions{Force: true},
+		); err != nil {
+			log.Printf("failed to remove container %s: %v", response.ID, err)
+		}
+	}()
+
+	err = cli.ContainerStart(ctx, response.ID, container.StartOptions{})
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
+		return "", fmt.Errorf(
+			"%w: start container: %v",
+			ErrContainerPreparation,
+			err,
+		)
+	}
+
+	archive, err := createCodeArchive(filename, code)
+	if err != nil {
+		return "", fmt.Errorf("failed to create code archive: %w", err)
+	}
+
+	err = cli.CopyToContainer(
+		ctx,
+		response.ID,
+		"/workspace",
+		archive,
+		container.CopyToContainerOptions{},
+	)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
+		return "", fmt.Errorf(
+			"%w: copy code into container: %v",
+			ErrContainerPreparation,
+			err,
+		)
+	}
+
+	if compileCommand != nil {
+		exitCode, err := runExec(ctx, cli, response.ID, compileCommand, output)
+
+		if errors.Is(err, ErrOutputLimitExceeded) {
+			return output.String() + "\nOutput limit exceeded (64 KiB)\n", nil
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("failed to run compiler: %w", err)
+		}
+
+		if exitCode != 0 {
+			return output.String(), nil
+		}
+	}
+
+	_, err = runExec(ctx, cli, response.ID, command, output)
+
+	if errors.Is(err, ErrOutputLimitExceeded) {
+		return output.String() + "\nOutput limit exceeded (64 KiB)\n", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to execute code: %w; program output: %s",
+			err,
+			output.String(),
+		)
+	}
+
+	return output.String(), nil
+}

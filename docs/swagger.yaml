@@ -1,0 +1,289 @@
+definitions:
+  internal_handlers.CommitRequest:
+    properties:
+      result:
+        type: string
+      task_id:
+        type: string
+    type: object
+  internal_handlers.CreateTaskRequest:
+    properties:
+      code:
+        type: string
+      translator:
+        type: string
+    type: object
+  internal_handlers.CreateTaskResponse:
+    properties:
+      task_id:
+        type: string
+    type: object
+  internal_handlers.GetResultResponse:
+    properties:
+      result:
+        type: string
+    type: object
+  internal_handlers.GetTaskResponse:
+    properties:
+      status:
+        type: string
+    type: object
+  internal_handlers.LoginResponse:
+    properties:
+      token:
+        type: string
+    type: object
+  internal_handlers.RegisterRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Swagger api for golang service
+  title: Golang integration service rabbitmq swagger
+  version: "1.0"
+paths:
+  /commit:
+    post:
+      consumes:
+      - application/json
+      description: Internal endpoint used by CodeProcessor to save task results
+      parameters:
+      - description: Task execution result
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.CommitRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "400":
+          description: Invalid request
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "404":
+          description: Task not found
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Save task execution result
+      tags:
+      - internal
+  /login:
+    post:
+      consumes:
+      - application/json
+      description: Login user to account
+      parameters:
+      - description: User credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.LoginResponse'
+        "400":
+          description: Username and password are required
+          schema:
+            type: string
+        "401":
+          description: Invalid credentials
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Login user
+      tags:
+      - auth
+  /register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account
+      parameters:
+      - description: User credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "409":
+          description: User already exists
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Register a new user
+      tags:
+      - auth
+  /result/{id}:
+    get:
+      description: Returns result of a task
+      parameters:
+      - description: Result ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.GetResultResponse'
+        "400":
+          description: Task ID is required
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "404":
+          description: This task not found
+          schema:
+            type: string
+        "405":
+          description: This method not allowed
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Retrieves result based on given ID
+      tags:
+      - tasks
+  /status/{id}:
+    get:
+      description: Returns the current processing status of a task
+      parameters:
+      - description: Status ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.GetTaskResponse'
+        "400":
+          description: Task ID is required
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "404":
+          description: This task not found
+          schema:
+            type: string
+        "405":
+          description: This method not allowed
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Retrieves status based on given ID
+      tags:
+      - tasks
+  /task:
+    post:
+      consumes:
+      - application/json
+      description: Accepts code for asynchronous processing
+      parameters:
+      - description: Task data
+        in: body
+        name: task
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.CreateTaskResponse'
+        "400":
+          description: Invalid JSON
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            type: string
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Create a new task
+      tags:
+      - tasks
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter your token as: Bearer <token>'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
