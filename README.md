@@ -182,12 +182,6 @@ git clone https://github.com/prixhd/golang-integration-service-rabbitmq.git
 cd golang-integration-service-rabbitmq
 ```
 
-Для получения реализации четвёртой части перейти в ветку:
-
-```bash
-git switch feature/part4
-```
-
 Запустить приложение:
 
 ```bash
